@@ -91,27 +91,50 @@ updated as work lands — it's the source of truth for "what's left."
 
 ## Phase 6 — Deployment to sitra.ir
 
-- [ ] Confirm with the user that Virtualmin's docroot now points at
-      `public_html/sitra/public` (their action, not ours — see
-      [ARCHITECTURE.md](ARCHITECTURE.md#deployment-topology))
-- [ ] Remove the placeholder `index.html` from `public_html`
-- [ ] Ship the app to `/mnt/ger_hd1/www/sitra/public_html/sitra/`
-      (excluding `node_modules`, `.git`, dev-only files)
-- [ ] `composer install --no-dev --optimize-autoloader` on the server (PHP
-      8.4 FPM pool already has every extension Filament needs — verified,
-      see ARCHITECTURE.md)
-- [ ] Real `.env` on the server (DB `sitra`, real `MSGWAY_API_KEY`, strong
-      `APP_KEY`, `APP_ENV=production`, `APP_DEBUG=false`)
-- [ ] `.user.ini` in the deployed `public/` raising `memory_limit` and
-      `upload_max_filesize`/`post_max_size` past the pool's conservative
-      defaults (128M / 2M / 8M) — no root needed, verified viable
-- [ ] `php artisan migrate --force --seed` against the live `sitra` DB
-- [ ] `php artisan storage:link`, `npm run build` (or ship pre-built
-      `public/build`), cache config/routes/views for production
-- [ ] Verify HTTPS via the existing `sitra.ir` cert already configured on
-      the vhost
-- [ ] Rotate the seeded local admin password immediately after first
-      production login
+- [x] Ship the app to `/mnt/ger_hd1/www/sitra/public_html/sitra/` via a
+      tarball over `pscp`/`plink` (excluding `node_modules`, `.git`,
+      `vendor`, `tests`, dev-only files; `public/build` shipped pre-built
+      from the local `npm run build` so Node never had to run on the
+      shared box)
+- [x] `composer install --no-dev --optimize-autoloader` on the server — hit
+      one snag: `storage/framework/{views,sessions,cache/data,testing}`
+      were excluded from the tarball (kept only via `.gitignore` locally),
+      so Blade's compiler failed with "Please provide a valid cache path."
+      Fixed by `mkdir -p`-ing them on the server before re-running.
+- [x] Real `.env` on the server: DB `sitra` (mysql, 127.0.0.1), `APP_ENV
+      =production`, `APP_DEBUG=false`, `APP_URL=https://sitra.ir`,
+      `SESSION_SECURE_COOKIE=true`, fresh `APP_KEY` generated on the
+      server. `SMS_DRIVER` is still `log` in production — **msgway isn't
+      live yet** because no real `MSGWAY_API_KEY` has been provided (see
+      "Open items" below); OTP codes are only written to the server's log
+      until that key is supplied.
+- [x] `.user.ini` uploaded into `public/` (`memory_limit=256M`,
+      `upload_max_filesize=60M`, `post_max_size=64M`,
+      `max_execution_time=60`) — confirmed no root needed, per the
+      pre-deploy verification in ARCHITECTURE.md
+- [x] `php artisan migrate --force --seed` ran clean against the live
+      `sitra` DB (roles + the throwaway admin account seeded)
+- [x] `php artisan storage:link`, `php artisan optimize` (config/route/
+      view/Filament caches) — all cached with no errors
+- [x] Smoke-tested via PHP's built-in server bound to the app's `public/`
+      directly on the box (bypassing Apache, since the vhost docroot
+      hasn't been switched yet): `/` → 302 to `/login`, `/login` → 200,
+      `/register` → 200, no new entries in `storage/logs/laravel.log`
+- [x] Removed the placeholder `index.html` from `public_html` (explicitly
+      authorized)
+- [ ] **Still needed from the user**: point Virtualmin's document root at
+      `public_html/sitra/public` — they opted to do this step themselves
+      (see [ARCHITECTURE.md](ARCHITECTURE.md#deployment-topology)); the
+      site is not reachable at `https://sitra.ir` until this happens, even
+      though everything behind it is ready and verified
+- [ ] Rotate the seeded local admin password (`09120000000` /
+      `ChangeMe123!`) immediately after first production login — this is
+      a throwaway credential, not meant to survive contact with a real
+      environment
+- [ ] Supply a real `MSGWAY_API_KEY` (and register/approve any
+      non-default templates in the msgway panel) and flip
+      `SMS_DRIVER=msgway` in the server's `.env` once available — OTP
+      registration cannot actually deliver SMS until then
 
 ## Open items to revisit later (not blocking v1)
 

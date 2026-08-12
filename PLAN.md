@@ -131,10 +131,41 @@ updated as work lands — it's the source of truth for "what's left."
       `ChangeMe123!`) immediately after first production login — this is
       a throwaway credential, not meant to survive contact with a real
       environment
-- [ ] Supply a real `MSGWAY_API_KEY` (and register/approve any
-      non-default templates in the msgway panel) and flip
-      `SMS_DRIVER=msgway` in the server's `.env` once available — OTP
-      registration cannot actually deliver SMS until then
+- [x] Supply a real `MSGWAY_API_KEY` and flip `SMS_DRIVER=msgway` — done;
+      the key authenticates and the driver is verified end to end against
+      the live API
+- [ ] **Blocked on the user, outside this codebase**: complete msgway
+      account verification (احراز هویت) in the msgway panel. Test sends
+      currently come back `200101020 / حساب کاربری شما تایید نشده است`
+      (traceID `88f7qzuPmPaWzRX`) — an account-level block, not a balance or
+      code problem. No OTP will deliver until it clears. See
+      [ARCHITECTURE.md](ARCHITECTURE.md#current-msgway-status)
+
+## Phase 7 — کالاها (Goods) + bid requirement rows
+
+- [x] `goods` + `good_drawings` + `bid_good_requirements` migrations per
+      [DATABASE.md](DATABASE.md#goods-کالاها)
+- [x] `GoodResource` (admin/staff): کد کالا (unique), شرح کالا, ابعاد و
+      مشخصات فنی, and نقشه as one-or-more PDF/image uploads.
+      `GoodPolicy` hides the whole menu item from the `user` role
+- [x] Deleting a good that a tender already cites is refused, with a Persian
+      notification naming the tenders — `restrictOnDelete` FK as the
+      backstop, no bulk delete on the table
+- [x] «کالاهای مورد نیاز» `Repeater` at the bottom of the bid create/edit
+      form: searchable good picker (matches شرح کالا **or** کد کالا, shown
+      as «نام (کد)») + integer quantity + add-row, bound straight to the
+      `goodRequirements` relationship. Same good twice per tender blocked
+      in the UI and by a unique index
+- [x] Two read-only record actions on the bids list for **every** role: eye
+      icon → title/description/dates modal, clipboard icon → the goods
+      table (with per-good نقشه download links)
+- [x] 14 tests covering the picker label/search, uniqueness, the delete
+      guard (DB + UI), create/edit round-trip of requirement rows, both
+      modals rendering, role gating, and that the description modal strips
+      markup the editor could not have produced
+- [ ] **Explicitly not in this phase**: unit of measure (واحد) on goods —
+      quantities are integer counts by explicit decision; a bulk
+      import/export for the goods catalogue; per-row notes on a requirement
 
 ## Open items to revisit later (not blocking v1)
 

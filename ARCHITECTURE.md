@@ -130,6 +130,29 @@ support/debugging (see [DATABASE.md](DATABASE.md#sent_sms_log)).
 OTP send is rate-limited per-mobile and per-IP (Laravel's rate limiter) to
 control cost, since msgway bills per accepted send regardless of delivery.
 
+### Current msgway status
+
+A real `MSGWAY_API_KEY` is now configured and the driver is verified working
+end to end — a test send reached msgway, authenticated, and came back with a
+structured error rather than a transport or credential failure:
+
+```
+code    200101020
+message حساب کاربری شما تایید نشده است
+traceID 88f7qzuPmPaWzRX
+```
+
+That is an **account-level** block on the msgway side (identity verification
+/ احراز هویت not completed in their panel), not a balance problem and not
+something any code change can route around. Until it clears, no SMS will
+deliver even though `SMS_DRIVER=msgway` is correct and live. `SentSmsLog`
+records the failure with its `traceID` for the support ticket.
+
+Local-dev note: PHP 8.4 on the shipping VPS resolves TLS fine, but a Windows
+PHP with no `curl.cainfo` / `openssl.cafile` in `php.ini` fails every msgway
+call with `cURL error 60: self-signed certificate in certificate chain`. That
+is a dev-machine config gap, not an app bug — point PHP at a `cacert.pem`.
+
 ## Calendar & localization
 
 - App locale fixed to `fa`; no language switcher, no other locale files
@@ -171,11 +194,73 @@ control cost, since msgway bills per accepted send regardless of delivery.
   `start_at <= now() AND expire_at > now()` — applied to the resource/table
   query for that role only; admin/staff see everything (including
   scheduled/expired) so they can manage the full lifecycle.
+- `BidGoodRequirement` — the «کالاهای مورد نیاز» rows, edited as a
+  `Repeater` bound to the `goodRequirements` relationship at the bottom of the
+  same create/edit form, so a tender and its goods are defined in one pass
+  (Filament writes/updates/deletes the rows itself — the page classes only
+  still hand-handle attachments, which predate this).
+- Two read-only record actions on the bids table, visible to **every** role:
+  an eye icon (title / description / start / end) and a clipboard icon (the
+  requirement rows). Both are built from **infolist entries**, not Blade
+  views — see [Panel CSS](#panel-css-has-no-tailwind-utilities).
 - `BidSuggestion` — **scaffold only**, per the explicit requirement: a
   table + a "ارسال پیشنهاد" button on the tenders list that opens a
   Filament wizard-modal action collecting a single free-text field for now.
   A unique DB constraint on `(bid_id, user_id)` enforces "one suggestion per
   tender" at the data layer even before the full business flow exists.
+
+## کالاها (Goods) module
+
+An admin/staff-only catalogue (`GoodPolicy` gates the whole resource; the
+`user` role never sees the menu item) that tenders draw from.
+
+- `Good` — `code` (کد کالا, unique), `name` (شرح کالا), `specifications`
+  (ابعاد و مشخصات فنی). **No unit-of-measure column** — quantities are plain
+  integer counts, an explicit product decision.
+- `GoodDrawing` — نقشه files, `hasMany` on `Good`, PDF/images only. Same
+  upload-in-the-form + list-in-a-relation-manager pattern as
+  `BidAttachment`, on purpose.
+- `Good::getPickerLabelAttribute()` renders «شرح کالا (کد کالا)» and
+  `Good::scopeSearch()` matches either half, so one searchable `Select` in
+  the bid repeater serves both "I know the name" and "I know the code". The
+  picker preloads 50 goods and searches beyond that.
+
+**Deleting a good that a tender already cites is refused.** Three layers,
+in the order the operator meets them:
+
+1. `GoodsTable`'s delete action `before()` hook halts with a Persian
+   notification naming the offending tenders.
+2. `bid_good_requirements.good_id` is `restrictOnDelete` — the DB refuses it
+   regardless of which code path tries.
+3. `GoodPolicy::delete()` deliberately does **not** encode the in-use check.
+   A `false` there would silently hide the delete button and leave the
+   operator guessing why; the explanation matters more than the tidiness.
+
+There is no bulk delete on the کالاها table for the same reason — a bulk
+action can only report one outcome for a mixed selection.
+
+## Panel CSS has no Tailwind utilities
+
+The panel's compiled stylesheet (`public/css/filament/filament/app.css`)
+contains **only Filament's own `fi-*` component classes** — Tailwind
+utilities like `flex`, `text-sm`, `gap-4` or `prose` are not in it, because
+no custom Filament theme is registered for this panel. (`resources/css/app.css`
+is Tailwind, but it only serves the non-panel pages: `/register` and the
+standalone layout.)
+
+Practical consequence, learned the expensive way while building the bid
+detail/goods modals: **do not hand-write Blade with utility classes for
+anything inside the panel** — it renders unstyled. Build modal bodies from
+Filament's own schema components (`TextEntry`, `RepeatableEntry`, `Section`,
+…) instead, which also gets dark mode and RTL for free. If genuinely custom
+markup is ever needed, register a custom Filament theme first rather than
+sprinkling inline styles.
+
+Rich-text stored by the `RichEditor` is re-rendered through Filament's
+`RichContentRenderer` rather than raw `{!! !!}`: it re-serialises the HTML
+through Tiptap's allowed node/mark set, so anything outside the editor's own
+vocabulary (scripts, event handlers) is dropped on the way out. There is a
+test asserting exactly that.
 
 ## Deployment topology
 

@@ -52,6 +52,14 @@ class Bid extends Model
         return $this->hasMany(BidAttachment::class);
     }
 
+    /**
+     * The «کالاهای مورد نیاز» rows defined at the bottom of the bid form.
+     */
+    public function goodRequirements(): HasMany
+    {
+        return $this->hasMany(BidGoodRequirement::class);
+    }
+
     public function suggestions(): HasMany
     {
         return $this->hasMany(BidSuggestion::class);

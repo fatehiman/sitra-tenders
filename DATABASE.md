@@ -103,6 +103,64 @@ Allowed types: PDF, Word/Excel/PowerPoint (legacy `.doc/.xls/.ppt` and OOXML
 `.docx/.xlsx/.pptx`), all common image formats, all common video formats,
 and `.mp3`.
 
+## `goods` (کالاها)
+
+The catalogue admin/staff maintain and then cite from tenders. There is
+deliberately **no unit-of-measure column** — quantities are plain integer
+counts (explicit product decision; adding a واحد later is a migration plus a
+form field, nothing structural).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `code` | string(64), unique | کد کالا — free-form, not numeric-only |
+| `name` | string, indexed | شرح کالا (the Persian name) |
+| `specifications` | text | ابعاد و مشخصات فنی |
+| `created_by` | bigint FK → users.id, nullable, null-on-delete | who catalogued it |
+| `created_at` / `updated_at` | timestamp | |
+
+`name` is indexed because the bid form's picker searches it alongside `code`
+(which already has a unique index) — see `Good::scopeSearch()`.
+
+## `good_drawings` (نقشه)
+
+Same shape as [`bid_attachments`](#bid_attachments), deliberately, so both use
+the identical upload-then-list pattern. Allowed types are narrower: **PDF and
+images only**.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `good_id` | bigint FK → goods.id, cascade delete | |
+| `disk` | string | e.g. `public` |
+| `path` | string | storage path |
+| `original_name` | string | original upload filename |
+| `mime_type` | string | server-verified, not trusted from the client |
+| `size` | unsigned bigint | bytes |
+| `created_at` | timestamp | |
+
+## `bid_good_requirements` (کالاهای مورد نیاز مناقصه)
+
+The rows of «we need N of good X» defined at the bottom of the bid
+create/edit form.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `bid_id` | bigint FK → bids.id, **cascade** delete | deleting a tender drops its requirement rows |
+| `good_id` | bigint FK → goods.id, **restrict** delete | a good cited by a tender cannot be deleted |
+| `quantity` | unsigned int | integer count, min 1 |
+| `created_at` / `updated_at` | timestamp | |
+
+Unique constraint on `(bid_id, good_id)` — the same good can't be listed
+twice on one tender, enforced at the data layer as well as in the repeater
+(`->distinct()`).
+
+The `restrictOnDelete` is the backstop, not the user-facing behaviour: the
+کالاها table's delete action checks first and halts with a Persian message
+naming the tenders that use the good (see
+[ARCHITECTURE.md](ARCHITECTURE.md#کالاها-goods-module)).
+
 ## `bid_suggestions` (پیشنهادات — scaffold only)
 
 Per the explicit requirement, this is intentionally minimal for now: enough

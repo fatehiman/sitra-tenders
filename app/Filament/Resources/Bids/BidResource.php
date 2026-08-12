@@ -27,6 +27,8 @@ class BidResource extends Resource
 
     protected static ?string $navigationLabel = 'مناقصات';
 
+    protected static ?int $navigationSort = 1;
+
     public static function form(Schema $schema): Schema
     {
         return BidForm::configure($schema);

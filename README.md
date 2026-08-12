@@ -31,9 +31,19 @@ This is the project's entry-point doc. See also:
    (with inline image upload directly from the editor), many attachments of
    mixed types (PDF/Office/images/video/audio), and a start/expire
    date-time.
-6. **Regular users** only see tenders that have started and not yet expired,
-   and can submit **one suggestion per tender** — scaffolded for now as a
-   button that opens a wizard-style modal (no deep business logic yet).
+6. **کالاها (Goods)** — an admin/staff-only catalogue: کد کالا (unique),
+   شرح کالا, ابعاد و مشخصات فنی, and نقشه as one or more attached PDFs or
+   images. A good that a tender already cites cannot be deleted.
+7. **Tender goods requirements** — the bottom of the tender create/edit form
+   carries a «کالاهای مورد نیاز» table: pick a good from a searchable list
+   (it matches شرح کالا *or* کد کالا, shown as «نام (کد)»), enter a count,
+   add the row. e.g. «۱۰۰۰ عدد پیچ کد ۸۳۷۲۴».
+8. **Regular users** only see tenders that have started and not yet expired.
+   Every tender row carries an eye icon (title, description, start/end in a
+   modal) and a clipboard icon (its goods requirements, with نقشه download
+   links). Users can submit **one suggestion per tender** — scaffolded for
+   now as a button that opens a wizard-style modal (no deep business logic
+   yet).
 
 ## Tech stack
 
@@ -46,6 +56,9 @@ This is the project's entry-point doc. See also:
   Gregorian storage (see [ARCHITECTURE.md](ARCHITECTURE.md#calendar--localization)).
 - SMS OTP delivery through a **provider-agnostic gateway** with a
   [msgway.com](https://msgway.com) driver as the default implementation.
+  The driver is live and verified, but delivery is currently blocked on the
+  msgway account's own identity verification — see
+  [ARCHITECTURE.md](ARCHITECTURE.md#current-msgway-status).
 
 ## Local development
 

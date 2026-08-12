@@ -294,6 +294,13 @@ before touching anything:
   works via `plink.exe -ssh -batch -pw '<password>' sitra@162.55.167.140
   '<command>'` (PuTTY's CLI client, already installed) — `sshpass` is not
   installed and wasn't needed.
+- **Port 22 is not reachable directly from the dev machine's network.** The
+  saved PuTTY session (`Ger1`) routes through an HTTP proxy on
+  `127.0.0.1:10809` — i.e. a local proxy/VPN client (v2rayN or similar) must
+  be running before any `plink`/`pscp` deploy step will connect; without it
+  the connection just times out. Plain HTTPS to `https://sitra.ir` works
+  without the proxy, so "the site loads but SSH hangs" is the expected
+  symptom, not a server fault.
 
 ## Security notes
 

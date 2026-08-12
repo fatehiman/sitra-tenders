@@ -122,11 +122,9 @@ updated as work lands — it's the source of truth for "what's left."
       `/register` → 200, no new entries in `storage/logs/laravel.log`
 - [x] Removed the placeholder `index.html` from `public_html` (explicitly
       authorized)
-- [ ] **Still needed from the user**: point Virtualmin's document root at
-      `public_html/sitra/public` — they opted to do this step themselves
-      (see [ARCHITECTURE.md](ARCHITECTURE.md#deployment-topology)); the
-      site is not reachable at `https://sitra.ir` until this happens, even
-      though everything behind it is ready and verified
+- [x] Virtualmin document root pointed at `public_html/sitra/public` — the
+      user did this themselves. Verified live on 2026-08-12: `https://sitra.ir/`
+      → 302 → `/login`, `/login` → 200 with `dir="rtl"`
 - [ ] Rotate the seeded local admin password (`09120000000` /
       `ChangeMe123!`) immediately after first production login — this is
       a throwaway credential, not meant to survive contact with a real

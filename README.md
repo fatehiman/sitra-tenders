@@ -72,10 +72,11 @@ npm run build   # or `npm run dev` while iterating
 php artisan serve
 ```
 
-Seeded roles (`admin`, `staff`, `user`) and a default admin account are
-created by `RoleSeeder` / `AdminUserSeeder` — see [PLAN.md](PLAN.md) for
-credentials-handling notes (never commit real secrets; local seeder uses a
-throwaway password you must change immediately).
+Seeded roles (`admin`, `staff`, `user`) and a default admin account
+(`09120000000`) are created by `RoleSeeder` / `AdminUserSeeder`. The seeder
+holds **no hard-coded password**: set `ADMIN_SEED_PASSWORD` in `.env`, or
+leave it unset and the seeder generates a random one and prints it once —
+store it then, it isn't written anywhere else.
 
 ## Production target
 

@@ -125,10 +125,14 @@ updated as work lands — it's the source of truth for "what's left."
 - [x] Virtualmin document root pointed at `public_html/sitra/public` — the
       user did this themselves. Verified live on 2026-08-12: `https://sitra.ir/`
       → 302 → `/login`, `/login` → 200 with `dir="rtl"`
-- [ ] Rotate the seeded local admin password (`09120000000` /
-      `ChangeMe123!`) immediately after first production login — this is
-      a throwaway credential, not meant to survive contact with a real
-      environment
+- [x] Rotate the seeded admin password. **Done 2026-08-12, and it mattered**:
+      the literal lived in `AdminUserSeeder`, was committed in every commit,
+      and had been seeded into the live DB — so publishing this repo
+      publicly would have handed out a working production admin login. The
+      live password was rotated out-of-band (the new one was given to the
+      user directly, not written to any file) and the seeder no longer
+      contains a literal at all: it reads `ADMIN_SEED_PASSWORD`, or
+      generates a random one and prints it once. Two tests guard that.
 - [x] Supply a real `MSGWAY_API_KEY` and flip `SMS_DRIVER=msgway` — done;
       the key authenticates and the driver is verified end to end against
       the live API
@@ -161,6 +165,18 @@ updated as work lands — it's the source of truth for "what's left."
       guard (DB + UI), create/edit round-trip of requirement rows, both
       modals rendering, role gating, and that the description modal strips
       markup the editor could not have produced
+- [x] Deployed to `https://sitra.ir` on 2026-08-12: files shipped over SSH
+      (root key + `chown sitra:sitra`, since port 22 was firewall-blocked
+      until the dev IP was whitelisted), three migrations applied clean
+      against the live `sitra` DB, caches cleared and rebuilt. Verified:
+      `/goods` and `/goods/create` 302 to `/login` (registered), a bogus
+      path still 404s, no new entries in `storage/logs/laravel.log`
+- [x] `SMS_DRIVER=msgway` + the real API key set in the server `.env`
+      (perms tightened to 600 — it was world-readable). A test send **from
+      the server** returns the same `200101020 / حساب کاربری شما تایید نشده
+      است` (traceID `yVLU7Pn51NMV5d7`) as from the dev machine, which
+      confirms outbound egress and key auth both work and the block is
+      purely account-side
 - [ ] **Explicitly not in this phase**: unit of measure (واحد) on goods —
       quantities are integer counts by explicit decision; a bulk
       import/export for the goods catalogue; per-row notes on a requirement

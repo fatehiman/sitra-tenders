@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Auth\Login;
+use App\Filament\Auth\Register;
 use Filament\FontProviders\LocalFontProvider;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -11,6 +12,7 @@ use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\Support\Enums\Width;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
@@ -45,9 +47,38 @@ class AppPanelProvider extends PanelProvider
             // Our own login page subclass — this app authenticates by mobile
             // number rather than by email (there is no email column at all).
             ->login(Login::class)
+            /*
+             * Public sign-up, as a panel page rather than a standalone
+             * Blade/Livewire route.
+             *
+             * ->registration() gives us the /register route (the panel is
+             * mounted at '', so the URL is unchanged from before), keeps it
+             * outside the panel's auth middleware, and renders it in the same
+             * shell as /login — same RTL, same Vazirmatn, same dark mode.
+             * The three-step OTP wizard lives in App\Filament\Auth\Register.
+             */
+            ->registration(Register::class)
             ->colors([
                 'primary' => Color::Amber,
             ])
+            /*
+             * Layout width. Both of these are panel-level settings that
+             * Filament turns into CSS custom properties on its own layout —
+             * there is no stylesheet of ours involved, which is exactly why
+             * they are here and not in public/css (see also the "Panel CSS
+             * has no Tailwind utilities" note in ARCHITECTURE.md).
+             *
+             * sidebarWidth: Filament's default is 20rem (320px). The nav has
+             * only five short Persian labels, so that left a wide empty
+             * gutter — 15.625rem is 250px, i.e. 70px narrower.
+             *
+             * maxContentWidth: by default Filament caps a page's content at
+             * 7xl (80rem) and centres it, which on a wide monitor wastes most
+             * of the screen on tables like مناقصات and کالاها. Width::Full
+             * removes the cap so the page uses the whole viewport.
+             */
+            ->sidebarWidth('15.625rem')
+            ->maxContentWidth(Width::Full)
             /*
              * Typography: Vazirmatn, served from our own public/ folder.
              *

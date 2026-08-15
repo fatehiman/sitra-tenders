@@ -1,6 +1,13 @@
 /*
- * Stylesheet for the standalone (non-Filament) pages — currently just
- * /register. Compiled by Vite; see vite.config.js.
+ * Stylesheet for standalone (non-Filament) pages. Compiled by Vite; see
+ * vite.config.js.
+ *
+ * NOTHING CURRENTLY LOADS THIS FILE. It existed for /register, which was the
+ * app's only hand-written Tailwind page until that page became a Filament
+ * panel page (App\Filament\Auth\Register) and its layout was deleted. It is
+ * kept, along with the Vite build, so that adding a future page outside the
+ * panel does not mean re-deriving the Tailwind + Vazirmatn setup — but if no
+ * such page ever appears, this file and the whole npm build can go.
  *
  * The Filament panel does NOT use this file. It ships its own compiled CSS,
  * which is why hand-written Tailwind utility classes do not work inside

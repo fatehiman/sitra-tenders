@@ -47,6 +47,17 @@ class BidForm
     public static function configure(Schema $schema): Schema
     {
         return $schema
+            /*
+             * ONE column at the top level, so the two Sections below stack
+             * vertically instead of sitting side by side.
+             *
+             * This line is load-bearing: a resource form schema defaults to
+             * TWO columns, so each top-level Section took half the width and
+             * both the شرح مناقصه editor and the کالاهای مورد نیاز table were
+             * squeezed into a narrow strip. Note the *inner* Section still
+             * declares ->columns(2) for its own fields — that is unaffected.
+             */
+            ->columns(1)
             ->components([
                 Section::make('اطلاعات مناقصه')
                     ->columns(2)
@@ -63,22 +74,47 @@ class BidForm
                             ->label('شرح مناقصه')
                             ->required()
                             ->columnSpanFull(),
-                        // Dates are entered and stored as ordinary Gregorian
-                        // values; only the *display* is converted to Jalali
-                        // (see BidsTable). ->native(false) uses Filament's
-                        // own picker instead of the browser's, which looks
-                        // and behaves the same in every browser.
+                        /*
+                         * Jalali (Shamsi) date-time pickers.
+                         *
+                         * The VALUE is still an ordinary Gregorian datetime —
+                         * that is what reaches the model and the database, so
+                         * every ->after() comparison, ->active() scope and
+                         * now()->between() elsewhere keeps working unchanged.
+                         * ->jalali() only swaps the calendar the operator
+                         * *sees and clicks*: Persian month names, Saturday as
+                         * the first day of the week, 1405/05/24 in the box.
+                         *
+                         * Order matters in this chain:
+                         *  - ->native(false) must come first. It tells
+                         *    Filament to use its own JS picker rather than
+                         *    the browser's <input type="datetime-local">,
+                         *    which can only ever render a Gregorian calendar.
+                         *  - ->jalali() then replaces that picker's view with
+                         *    the Jalali one and sets a default display format.
+                         *  - ->displayFormat(...) comes AFTER ->jalali()
+                         *    because jalali() sets its own ('Y/m/d H:i:s');
+                         *    putting ours first would just be overwritten.
+                         *    ->seconds(false) alone is not enough for the
+                         *    same reason.
+                         */
                         DateTimePicker::make('start_at')
                             ->label('تاریخ و ساعت شروع')
                             ->required()
                             ->native(false)
-                            ->seconds(false),
+                            ->seconds(false)
+                            ->jalali()
+                            ->displayFormat(config('filament-jalali.date_time_format')),
                         DateTimePicker::make('expire_at')
                             ->label('تاریخ و ساعت پایان')
                             ->required()
                             ->native(false)
                             ->seconds(false)
+                            ->jalali()
+                            ->displayFormat(config('filament-jalali.date_time_format'))
                             // Rejects an end date at or before the start.
+                            // Compares the underlying Gregorian values, so
+                            // the Jalali display makes no difference here.
                             ->after('start_at'),
                         // Note the field name is 'new_attachments', not
                         // 'attachments': it is NOT a database column. The

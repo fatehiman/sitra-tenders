@@ -43,7 +43,7 @@ row doesn't exist yet when the code is sent.
 | `code_hash` | string | never store the plaintext code |
 | `attempts` | unsigned tinyint, default 0 | capped (e.g. 5) before the code is invalidated |
 | `expires_at` | timestamp | short TTL (e.g. 2 minutes) |
-| `verified_at` | timestamp, nullable | |
+| `verified_at` | timestamp, nullable | **Load-bearing, not just an audit field.** It is what the registration wizard's final submit checks: the account is only created if a row for that exact mobile is stamped here within the last 10 minutes (`OtpService::verifiedWithin()`). The wizard's own step state lives in the browser and is not trusted — see [ARCHITECTURE.md](ARCHITECTURE.md#the-ten-minute-window-and-what-is-actually-trusted) |
 | `ip_address` | string, nullable | for rate limiting / abuse review |
 | `created_at` | timestamp | |
 

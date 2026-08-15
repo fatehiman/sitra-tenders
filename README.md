@@ -13,11 +13,15 @@ This is the project's entry-point doc. See also:
 
 ## Feature summary
 
-1. **Public registration** — name, family, mobile, national ID (کدملی), person
-   type (حقیقی/حقوقی؛ حقوقی adds company name + شناسه ملی — validated as any
-   unique 11-digit number, no checksum), password. Mobile
-   is verified via a 6-digit SMS OTP sent from a button + modal (no multi-step
-   wizard/page change). On success the account is created and the user is
+1. **Public registration** — a three-step wizard at `/register`:
+   (1) enter the mobile number and receive a 6-digit SMS OTP, (2) confirm the
+   code, (3) fill in name, family, national ID (کدملی), person type
+   (حقیقی/حقوقی؛ حقوقی adds company name + شناسه ملی — validated as any
+   unique 11-digit number, no checksum) and a password. Verifying the number
+   first means no SMS is paid for on a number that can't register, and nobody
+   fills in eight fields before finding out the code can't be delivered.
+   The visitor has 10 minutes after confirming the code to finish; past that
+   they go back to step 1. On success the account is created and the user is
    logged straight into the panel. If `company_name` is set, the account is
    treated/displayed as a company account everywhere in the app; otherwise
    the person's name + family is displayed.
@@ -53,8 +57,11 @@ This is the project's entry-point doc. See also:
   policies/roles instead of separate panels.
 - **spatie/laravel-permission** for roles (admin/staff/user, extensible).
 - **MySQL 8** for storage, local disk for file attachments.
-- Persian-only UI, RTL layout, Jalali (Shamsi) date display on top of
-  Gregorian storage (see [ARCHITECTURE.md](ARCHITECTURE.md#calendar--localization)).
+- Persian-only UI, RTL layout, **Jalali (Shamsi) everywhere the user looks** —
+  date pickers, table columns and detail views — on top of Gregorian storage,
+  via `ariaieboy/filament-jalali`. Digits stay Latin (`1405/05/24`) to match
+  every other number in the panel. See
+  [ARCHITECTURE.md](ARCHITECTURE.md#calendar--localization).
 - **Vazirmatn** (SIL OFL) as the single font family, self-hosted from
   `public/fonts/`. The app makes **no external resource requests** — no
   Google/Bunny Fonts, no CDN — and uses no Tahoma anywhere. See

@@ -11,6 +11,7 @@
 | Queue/cache | `database` driver (not Redis) | Target VPS has only 3.7GB RAM shared across ~60 tenants; a shared Redis instance exists on the box but is not dedicated to this app — avoiding it sidesteps key-collision/eviction risk with other tenants. Revisit if queue volume grows. |
 | File storage | Local disk (`storage/app/public`, symlinked to `public/storage`) | Single-VPS deployment, no S3 requirement given |
 | SMS | Provider-agnostic gateway, default driver = **msgway** | User confirmed; see [SMS gateway](#sms-gateway) below |
+| Jalali dates | `ariaieboy/filament-jalali` `^2.2` | The maintained, Filament-v4-native option (v2 = Filament 4; v1 = 3; v3 = 5). Covers pickers, table columns, infolist entries and query-builder date constraints in one package — see [Calendar & localization](#calendar--localization) |
 | Locale | Persian (`fa`) only, RTL only | Explicit requirement — no language switcher, no LTR fallback |
 
 Laravel/Filament exact versions are whatever `composer create-project
@@ -28,46 +29,107 @@ separate public site to protect a `/admin` prefix from.
 - `/login` — Filament's login page, customized to authenticate by **mobile
   number**, not email (this app has no email field at all — see
   [DATABASE.md](DATABASE.md#users)).
-- `/register` — a **custom, non-panel Livewire full-page route** (not a
-  Filament resource/page) rendering the public registration form. It has to
-  live outside the panel's auth middleware since the visitor isn't
-  authenticated yet and Filament's own auth pages don't model a "send
-  OTP → confirm in modal → create + login" flow.
+- `/register` — Filament's own registration page (`->registration()`),
+  subclassed as `App\Filament\Auth\Register`. Filament routes it outside the
+  panel's auth middleware for us. **This used to be a standalone Livewire
+  route with hand-written Tailwind; it is not any more** — see
+  [Registration + OTP flow](#registration--otp-flow).
 - Panel home (`/`) resolves to the **مناقصات (Bid) list**, not Filament's
   default Dashboard, for every role — the Dashboard page is not registered.
 - `/profile` (or similar) — the **change password** page, available to all
   three roles via the panel's user menu.
 
+`routes/web.php` is therefore effectively empty: the panel registers every
+route the app has. Link to registration with
+`filament()->getRegistrationUrl()`, not `route('register')` — the route name
+is Filament's `filament.app.auth.register`.
+
 Navigation items and resource visibility are controlled per-role via
 Filament resource `canViewAny()`/policies backed by
 `auth()->user()->hasRole(...)`, not by hiding/showing whole panels.
 
+### Layout width
+
+Two panel-level settings in `AppPanelProvider`, both deliberately **not**
+CSS:
+
+```php
+->sidebarWidth('15.625rem')     // Filament's default is 20rem (320px)
+->maxContentWidth(Width::Full)  // default caps a page at 7xl and centres it
+```
+
+Filament emits both as CSS custom properties (`--sidebar-width`, the layout's
+max width) that its entire layout is built on, so setting them here keeps the
+sidebar, topbar offset and content margins consistent — including in the
+collapsed-sidebar state, which an override stylesheet would break. The nav
+holds five short Persian labels, so 320px left a wide empty gutter; the
+content cap wasted most of a wide monitor on the مناقصات and کالاها tables.
+
+Note this does **not** widen `/login` or `/register`: `SimplePage` prefers
+its own `getMaxWidth()` over the panel's content width. The registration
+wizard sets that itself.
+
 ## Registration + OTP flow
 
-Single page, no wizard/page navigation, per the explicit requirement:
+A **three-step Filament `Wizard`** on `App\Filament\Auth\Register`, which
+subclasses Filament's own `Auth\Pages\Register`:
 
-1. Visitor fills the whole form (name, family, mobile, national ID, person
-   type, [company name + شناسه ملی if حقوقی], password + confirmation) in
-   one Livewire component.
-2. Clicking **"ارسال کد تایید"** validates the entire form client- and
-   server-side first (so we never send an OTP for a form that can't
-   register anyway), then:
+1. **«شماره موبایل»** — the mobile number, and nothing else. Pressing «بعدی»
+   validates the field (format + not already registered) and only then, in
+   the step's `afterValidation()` hook:
    - generates a 6-digit numeric code,
-   - stores it **hashed** with a short TTL and an attempt counter in
+   - stores it **hashed** with a 2-minute TTL and an attempt counter in
      `otp_verifications` (keyed by mobile — no `users` row exists yet),
    - sends it through the SMS gateway (msgway built-in Persian template
-     `templateID=3`, `کد تایید شما: [code]` — no panel registration needed),
-   - opens a modal asking for the 6-digit code, **without a page
-     transition** (same Livewire component, just a `showOtpModal = true`
-     state flip).
-3. On submit, the code is checked against the hash (rate-limited attempts,
-   TTL-checked). On success, inside one DB transaction: create the `users`
-   row from the already-validated form data, assign the `user` role, mark
-   `mobile_verified_at`, delete the OTP row, `Auth::login()`, redirect to
-   the tenders list.
-4. On failure, the modal shows the error and lets the visitor retry or
-   request a new code (basic resend cooldown, e.g. 60s) — no partial user
-   record ever exists on failed/abandoned attempts.
+     `templateID=3`, `کد تایید شما: [code]` — no panel registration needed).
+
+   A send failure throws, so the wizard stays on this step with the
+   provider's own reason under the field.
+2. **«کد تایید»** — the code, checked against the hash (attempt-capped,
+   TTL-checked) in this step's `afterValidation()`. A «ارسال مجدد کد» action
+   re-sends, subject to the 60-second cooldown. Success stamps `verified_at`
+   on the row.
+3. **«اطلاعات کاربر»** — name, family, national ID, person type, the two
+   حقوقی fields, password + confirmation. Submitting creates the `users` row
+   in one DB transaction, assigns the `user` role, stamps
+   `mobile_verified_at`, deletes the OTP row, logs in, and lands on the
+   tenders list.
+
+No `users` row exists until step 3 succeeds, so an abandoned or failed
+registration leaves nothing to clean up.
+
+### Why the order changed
+
+The original build was a single page, per an explicit requirement at the
+time, and the user later asked for the wizard instead. Verifying the number
+*before* asking for eight more fields is the substantive gain: the old form
+made people fill in everything and only then discover the SMS could not be
+delivered (which, given [the msgway block](#current-msgway-status), was every
+single attempt).
+
+That page also had a real bug worth recording, because it is easy to
+reintroduce: its OTP modal sat **outside** the Livewire component's single
+root element. Livewire only ever patches the first root element, so the SMS
+went out, `showOtpModal` flipped to `true`, and the markup asking for the
+code was discarded before it reached the browser — the visitor saw nothing
+happen. Building the form from Filament schema components makes that class of
+bug impossible: there is no hand-written markup left.
+
+### The ten-minute window, and what is actually trusted
+
+Passing step 2 gives the visitor `OtpService::REGISTRATION_WINDOW_SECONDS`
+(10 minutes) to finish step 3. Past that, submitting sends them back to a
+fresh step 1 with an explanation rather than failing obscurely — their proof
+of ownership is gone, so there is nothing left on the page to correct.
+
+**That check reads the database, not the component.** A Livewire component's
+public state round-trips through the browser, and a Filament `Wizard`'s
+current step is tracked client-side in Alpine — so "the wizard says I am on
+step 3" proves nothing, and `->skippable(false)` cannot prove you were ever
+on step 1. The gate is `OtpService::verifiedWithin($mobile)`: a row for
+exactly the submitted number, stamped `verified_at`, inside the window.
+Editing the mobile field after passing the OTP step therefore fails closed,
+and there is a test pinning that.
 
 Admin-created users/staff (via the Filament `UserResource` "create" form)
 **skip this whole flow** — admin sets the password directly and
@@ -171,16 +233,45 @@ is a dev-machine config gap, not an app bug — point PHP at a `cacert.pem`.
   (`FilamentServiceProvider`/panel `->rtl()` equivalent — Filament v4 handles
   the RTL flip once locale/direction is set).
 - **Dates are stored as standard Gregorian `datetime` columns in MySQL —
-  never Jalali in the DB.** Jalali/Shamsi is a **display-only** concern:
-  Filament's standard Gregorian `DateTimePicker` is used for input (tender
-  start/expire) to avoid depending on a custom picker component of
-  uncertain Filament v4 compatibility, while every read-only rendering of a
-  date (table columns, detail views) is formatted as Jalali via
-  `morilog/jalali`'s `jdate()`. This keeps all date arithmetic
-  (`now()->between(...)`) trivially correct and is a deliberate scoping
-  call, not something the user asked for explicitly — a Jalali-aware input
-  picker can replace the Gregorian one later if it matters enough to
-  justify vetting a v4-compatible package.
+  never Jalali in the DB.** Jalali/Shamsi is a **display-only** concern.
+  Every date the user sees or picks is Jalali; every date the database,
+  the query scopes and the validation rules touch is Gregorian. This keeps
+  all date arithmetic (`now()->between(...)`, `->after('start_at')`,
+  `ORDER BY start_at`) trivially correct.
+
+  This is done with **`ariaieboy/filament-jalali`**, which adds macros to
+  Filament's existing components rather than introducing new ones:
+
+  | Where | Call |
+  |---|---|
+  | Form input | `DateTimePicker::make(...)->jalali()` |
+  | Table column | `TextColumn::make(...)->jalaliDateTime()` |
+  | Infolist entry | `TextEntry::make(...)->jalaliDateTime()` |
+  | Query-builder filter | `DateConstraint::make(...)->jalali()` |
+
+  Formats live in `config/filament-jalali.php` (`Y/m/d`, `Y/m/d H:i`) so
+  there is one definition for the whole app. **Digits are Latin**
+  (`1405/05/24`, not `۱۴۰۵/۰۵/۲۴`) by explicit decision — every other
+  numeric value in the panel (کد ملی, موبایل, تعداد, file sizes) is Latin,
+  and mixing the two in one table reads as a rendering fault.
+
+  Two ordering traps in the picker chain, both silent:
+  `->native(false)` must come **before** `->jalali()` (a native
+  `datetime-local` input can only render a Gregorian calendar), and
+  `->displayFormat(...)` must come **after** it, because `->jalali()` sets
+  its own format unconditionally — which also means `->seconds(false)`
+  alone does not remove the seconds.
+
+  This supersedes the earlier decision to keep a Gregorian picker and format
+  only on read with `morilog/jalali`'s `jdate()`. That was a scoping call
+  pending "a v4-compatible package worth vetting"; this is that package.
+  **`morilog/jalali` has been removed** — nothing referenced it once the
+  macros replaced the hand-written `Jalalian::fromDateTime(...)->format(...)`
+  calls, and leaving two Jalali libraries installed invites someone to format
+  a date with the one that ignores `config/filament-jalali.php`.
+
+  There are no date *filters* on any table today, so there is nowhere the
+  `DateConstraint` macro is currently needed — use it if one is added.
 - کدملی (national ID, 10 digits) gets a dedicated Laravel validation rule
   (`App\Rules\IranianNationalId`) implementing the standard Iranian
   checksum, not just a digit-count/regex check.
@@ -216,6 +307,12 @@ is a dev-machine config gap, not an app bug — point PHP at a `cacert.pem`.
   same create/edit form, so a tender and its goods are defined in one pass
   (Filament writes/updates/deletes the rows itself — the page classes only
   still hand-handle attachments, which predate this).
+- The create/edit form declares **`->columns(1)` at the top level** so its two
+  Sections («اطلاعات مناقصه» and «کالاهای مورد نیاز») stack vertically. That
+  line is load-bearing and easy to delete by accident: a Filament resource
+  form schema defaults to *two* columns, which put the two Sections side by
+  side and squeezed both the rich-text editor and the goods table into half
+  the page. The inner `Section` keeps its own `->columns(2)`.
 - Two read-only record actions on the bids table, visible to **every** role:
   an eye icon (title / description / start / end) and a clipboard icon (the
   requirement rows). Both are built from **infolist entries**, not Blade
@@ -290,8 +387,13 @@ single definition with a plain `<link>`:
   provider: LocalFontProvider::class, preload: [...])` in
   `AppPanelProvider`. `LocalFontProvider` is the key part — Filament's
   default provider is `BunnyFontProvider`, which would fetch from a CDN.
-- the standalone `/register` layout, via a direct `<link>` plus
-  `--font-sans` in `resources/css/app.css` pointing Tailwind at the family.
+
+There used to be a second consumer: the standalone `/register` layout, which
+linked the stylesheet directly and pointed Tailwind's `--font-sans` at the
+family in `resources/css/app.css`. Registration is a panel page now, so that
+layout is gone and the panel is the only consumer. `resources/css/app.css`
+and the Vite build are kept for a possible future non-panel page but are
+currently loaded by nothing.
 
 The variable font is the primary face (one file, every weight); the four
 static weights are only reached through `@supports not
@@ -314,8 +416,13 @@ The panel's compiled stylesheet (`public/css/filament/filament/app.css`)
 contains **only Filament's own `fi-*` component classes** — Tailwind
 utilities like `flex`, `text-sm`, `gap-4` or `prose` are not in it, because
 no custom Filament theme is registered for this panel. (`resources/css/app.css`
-is Tailwind, but it only serves the non-panel pages: `/register` and the
-standalone layout.)
+is Tailwind, but it served the standalone `/register` page, which no longer
+exists — nothing loads it today.)
+
+Filament's own Blade components (`<x-filament::button>`, etc.) *are* styled
+by that CSS, so they are fine to use in the rare places raw markup is needed
+— the registration wizard's submit button is one, because
+`Wizard::submitAction()` takes rendered HTML rather than an `Action` object.
 
 Practical consequence, learned the expensive way while building the bid
 detail/goods modals: **do not hand-write Blade with utility classes for

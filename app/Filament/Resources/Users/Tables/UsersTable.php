@@ -10,7 +10,6 @@ use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
-use Morilog\Jalali\Jalalian;
 
 /** The کاربران list table: columns, filters and the edit button. */
 class UsersTable
@@ -54,9 +53,14 @@ class UsersTable
                 IconColumn::make('is_active')
                     ->label('فعال')
                     ->boolean(),
+                // Jalali display, Gregorian storage and sorting — the macro
+                // comes from ariaieboy/filament-jalali and reads its format
+                // from config/filament-jalali.php. It renders nothing at all
+                // for a null value, so ->placeholder() supplies the dash.
                 TextColumn::make('created_at')
                     ->label('تاریخ ثبت')
-                    ->formatStateUsing(fn ($state) => $state ? Jalalian::fromDateTime($state)->format('Y/m/d H:i') : '-')
+                    ->jalaliDateTime()
+                    ->placeholder('-')
                     ->sortable(),
             ])
             // Dropdown filters shown above the table.

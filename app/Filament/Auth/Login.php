@@ -70,8 +70,11 @@ class Login extends BaseLogin
             return parent::getSubheading();
         }
 
+        // getRegistrationUrl(), not route('register'): registration is a panel
+        // page now (see AppPanelProvider->registration()), so its route name
+        // is Filament's own `filament.app.auth.register`.
         return new HtmlString(
-            'حساب کاربری ندارید؟ <a href="'.route('register').'" class="fi-link">ثبت‌نام</a>'
+            'حساب کاربری ندارید؟ <a href="'.filament()->getRegistrationUrl().'" class="fi-link">ثبت‌نام</a>'
         );
     }
 }

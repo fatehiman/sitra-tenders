@@ -28,6 +28,17 @@ class OtpService
     private const RESEND_COOLDOWN_SECONDS = 60;
 
     /**
+     * How long a *successful* verification stays usable: 10 minutes.
+     *
+     * This is a different clock from TTL_SECONDS above. TTL_SECONDS is how
+     * long the visitor has to type the code they were texted (2 minutes);
+     * this is how long they then have to fill in the rest of the
+     * registration form before the proof of ownership goes stale and they
+     * have to start over from the mobile-number step.
+     */
+    public const REGISTRATION_WINDOW_SECONDS = 600;
+
+    /**
      * The SmsGateway is injected rather than constructed here, so tests can
      * hand in a fake that records the code instead of texting it. See
      * AppServiceProvider for where the real one is bound.
@@ -130,6 +141,33 @@ class OtpService
         $otp->update(['verified_at' => now()]);
 
         return 'ok';
+    }
+
+    /**
+     * Has $mobile been proved, on the server, within the last 10 minutes?
+     *
+     * THIS IS THE REAL SECURITY GATE for registration, and it deliberately
+     * reads the database rather than trusting anything the browser sent.
+     *
+     * The registration wizard keeps "which step am I on" and "which number
+     * did I verify" in Livewire component state, and Livewire component
+     * state lives in the browser between requests — a determined visitor can
+     * put whatever they like in it. So the wizard's own step tracking is a
+     * user-interface convenience only. What actually decides whether an
+     * account may be created is this query: a row for exactly this mobile,
+     * stamped verified_at by verify() above, within the window.
+     *
+     * Changing the mobile field after passing the OTP step therefore fails
+     * closed — there is no verified row for the new number.
+     */
+    public function verifiedWithin(string $mobile, ?int $seconds = null): bool
+    {
+        $seconds ??= self::REGISTRATION_WINDOW_SECONDS;
+
+        return OtpVerification::where('mobile', $mobile)
+            ->whereNotNull('verified_at')
+            ->where('verified_at', '>=', now()->subSeconds($seconds))
+            ->exists();
     }
 
     /**

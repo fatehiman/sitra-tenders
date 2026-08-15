@@ -42,8 +42,9 @@ updated as work lands — it's the source of truth for "what's left."
       (implements both documented gotchas: positional `params`, top-level
       `code`) per [ARCHITECTURE.md](ARCHITECTURE.md#sms-gateway)
 - [x] `otp_verifications` + `sent_sms_log` migrations
-- [x] Public `/register` Livewire page: full form → "ارسال کد تایید" button
-      → modal with 6-digit input → on success, create user + assign `user`
+- [x] ~~Public `/register` Livewire page: full form → "ارسال کد تایید" button
+      → modal with 6-digit input~~ **superseded in Phase 9** by a three-step
+      Filament wizard — on success, create user + assign `user`
       role + auto-login + redirect to tenders list
 - [x] Resend cooldown + attempt cap + per-mobile/IP send rate limit
 
@@ -53,9 +54,9 @@ updated as work lands — it's the source of truth for "what's left."
 - [x] `BidResource` (admin/staff create/edit): title, `RichEditor`
       description with inline image upload, multi-file attachment upload
       (PDF/Office/image/video/mp3 allow-list), start/expire date-time.
-      Dates use Filament's standard Gregorian picker for input — Jalali is
-      display-only via `morilog/jalali` (see ARCHITECTURE.md's calendar
-      section for why the input picker wasn't swapped)
+      ~~Dates use Filament's standard Gregorian picker for input — Jalali is
+      display-only via `morilog/jalali`~~ **superseded in Phase 9:** the
+      pickers are Jalali too now, and `morilog/jalali` has been removed
 - [x] `active()` scope wired into the `user`-role table query (started,
       not expired); admin/staff see full lifecycle
 - [x] Bids list set as the panel's home page for every role (custom
@@ -212,6 +213,37 @@ updated as work lands — it's the source of truth for "what's left."
 - [x] Confirmed the SSH route has changed: port 22 is directly reachable
       now, the `Ger1` proxy session no longer works, and deploys go through
       the `Ger1-root` key with every command wrapped in `sudo -u sitra`.
+
+## Phase 9 — layout width, Jalali everywhere, registration wizard (2026-08-15)
+
+- [x] **Panel layout width.** `->sidebarWidth('15.625rem')` (70px narrower
+      than Filament's 20rem default) and `->maxContentWidth(Width::Full)` in
+      `AppPanelProvider`. Both are panel settings that Filament turns into
+      CSS custom properties — no stylesheet involved. Written up in
+      `E:\www\=knowledgebase\filament\panel-width-sidebar-and-content.md`
+- [x] **Jalali everywhere the user looks.** Added
+      `ariaieboy/filament-jalali:^2.2` (the v4-native branch) and switched
+      the tender date-time pickers to `->jalali()`, plus every date column
+      and infolist entry to `->jalaliDateTime()`. Formats centralised in
+      `config/filament-jalali.php`; digits stay Latin by decision. Removed
+      `morilog/jalali`, which nothing referenced any more. See
+      [ARCHITECTURE.md](ARCHITECTURE.md#calendar--localization)
+- [x] **Bid create/edit form stacks.** `->columns(1)` on the form schema —
+      a resource form defaults to two columns, which had the tender details
+      and the goods table side by side at half width each
+- [x] **Registration rebuilt as a three-step Filament wizard**
+      (`App\Filament\Auth\Register`, wired up with the panel's
+      `->registration()`): mobile → OTP → details, with a 10-minute window
+      after verification enforced from `otp_verifications`, not from
+      component state. Deleted the standalone Livewire page, its Blade view,
+      the standalone layout and the `/register` route.
+      This also fixed the reported bug that **the OTP box never appeared**:
+      the old view's modal sat outside the Livewire root element, so
+      Livewire discarded it on re-render. Nine wizard tests plus a new
+      `PageRendersTest` doing real authenticated HTTP GETs
+- [x] Two knowledgebase articles added under `E:\www\=knowledgebase\filament`
+      (panel width; Jalali + the `goToNextWizardStep()` testing trap), index
+      updated
 
 ## Open items to revisit later (not blocking v1)
 

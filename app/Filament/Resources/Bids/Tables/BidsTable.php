@@ -25,7 +25,6 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
-use Morilog\Jalali\Jalalian;
 
 /**
  * The مناقصات list table: its columns, and the buttons on each row.
@@ -61,16 +60,23 @@ class BidsTable
                     ->label('وضعیت')
                     ->badge()
                     ->visible(fn () => ! Auth::user()->hasRole(RoleName::User->value)),
-                // Stored Gregorian, shown Jalali — the conversion happens
-                // here, at the point of display, and nowhere else. Sorting
-                // still uses the real column, so it stays correct.
+                /*
+                 * Stored Gregorian, shown Jalali. ->jalaliDateTime() is a
+                 * macro added to TextColumn by ariaieboy/filament-jalali; it
+                 * formats using config('filament-jalali.date_time_format'),
+                 * so the format lives in one place for the whole app.
+                 *
+                 * Sorting is unaffected — it still ORDERs BY the real
+                 * Gregorian column, so the order stays chronologically
+                 * correct rather than sorting formatted strings.
+                 */
                 TextColumn::make('start_at')
                     ->label('شروع')
-                    ->formatStateUsing(fn ($state) => Jalalian::fromDateTime($state)->format('Y/m/d H:i'))
+                    ->jalaliDateTime()
                     ->sortable(),
                 TextColumn::make('expire_at')
                     ->label('پایان')
-                    ->formatStateUsing(fn ($state) => Jalalian::fromDateTime($state)->format('Y/m/d H:i'))
+                    ->jalaliDateTime()
                     ->sortable(),
                 // The dot means "follow the creator relationship, then read
                 // display_name from it" — company name, or person's name.
@@ -111,12 +117,14 @@ class BidsTable
             ->modalHeading(fn (Bid $record): string => $record->title)
             // ->schema() here describes the MODAL's contents, not a form.
             ->schema([
+                // Same Jalali macro as the table columns, on the infolist
+                // side — see the note on the start_at column above.
                 TextEntry::make('start_at')
                     ->label('تاریخ و ساعت شروع')
-                    ->formatStateUsing(fn ($state) => Jalalian::fromDateTime($state)->format('Y/m/d H:i')),
+                    ->jalaliDateTime(),
                 TextEntry::make('expire_at')
                     ->label('تاریخ و ساعت پایان')
-                    ->formatStateUsing(fn ($state) => Jalalian::fromDateTime($state)->format('Y/m/d H:i')),
+                    ->jalaliDateTime(),
                 TextEntry::make('description')
                     ->label('شرح مناقصه')
                     // Re-serialised through Filament's own rich-content

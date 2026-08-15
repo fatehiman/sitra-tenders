@@ -8,7 +8,6 @@ use Filament\Actions\EditAction;
 use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
-use Morilog\Jalali\Jalalian;
 
 /**
  * The کالاها list table.
@@ -50,9 +49,12 @@ class GoodsTable
                     ->label('مناقصات')
                     ->counts('bidRequirements')
                     ->badge(),
+                // Jalali display, Gregorian storage and sorting — see the
+                // matching column in UsersTable for the details.
                 TextColumn::make('created_at')
                     ->label('تاریخ ثبت')
-                    ->formatStateUsing(fn ($state) => $state ? Jalalian::fromDateTime($state)->format('Y/m/d H:i') : '-')
+                    ->jalaliDateTime()
+                    ->placeholder('-')
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])

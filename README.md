@@ -14,7 +14,8 @@ This is the project's entry-point doc. See also:
 ## Feature summary
 
 1. **Public registration** — name, family, mobile, national ID (کدملی), person
-   type (حقیقی/حقوقی؛ حقوقی adds company name + شناسه ملی), password. Mobile
+   type (حقیقی/حقوقی؛ حقوقی adds company name + شناسه ملی — validated as any
+   unique 11-digit number, no checksum), password. Mobile
    is verified via a 6-digit SMS OTP sent from a button + modal (no multi-step
    wizard/page change). On success the account is created and the user is
    logged straight into the panel. If `company_name` is set, the account is
@@ -54,6 +55,10 @@ This is the project's entry-point doc. See also:
 - **MySQL 8** for storage, local disk for file attachments.
 - Persian-only UI, RTL layout, Jalali (Shamsi) date display on top of
   Gregorian storage (see [ARCHITECTURE.md](ARCHITECTURE.md#calendar--localization)).
+- **Vazirmatn** (SIL OFL) as the single font family, self-hosted from
+  `public/fonts/`. The app makes **no external resource requests** — no
+  Google/Bunny Fonts, no CDN — and uses no Tahoma anywhere. See
+  [ARCHITECTURE.md](ARCHITECTURE.md#typography-vazirmatn-self-hosted-no-external-requests).
 - SMS OTP delivery through a **provider-agnostic gateway** with a
   [msgway.com](https://msgway.com) driver as the default implementation.
   The driver is live and verified, but delivery is currently blocked on the
@@ -77,6 +82,20 @@ Seeded roles (`admin`, `staff`, `user`) and a default admin account
 holds **no hard-coded password**: set `ADMIN_SEED_PASSWORD` in `.env`, or
 leave it unset and the seeder generates a random one and prints it once —
 store it then, it isn't written anywhere else.
+
+## Code conventions
+
+**Comment generously, and write for a beginner.** This is a standing rule
+for the project, not a one-off cleanup: assume the next person reading a
+file has not used Laravel, Livewire or Filament before. Every class carries
+a docblock saying what it is and why it exists, and anything a newcomer
+would have to look up — a framework hook, a lifecycle method, a security
+measure, a non-obvious method name — gets an inline comment.
+
+Keep explaining the **why** as well as the what. Several comments in this
+codebase exist specifically to stop a well-meaning change from undoing a
+deliberate decision (the relaxed شناسه ملی rule, the absence of a `status`
+column on tenders, the "no Tailwind utilities inside the panel" rule).
 
 ## Production target
 

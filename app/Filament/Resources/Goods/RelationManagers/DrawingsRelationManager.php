@@ -17,10 +17,12 @@ use Illuminate\Support\Facades\Storage;
  */
 class DrawingsRelationManager extends RelationManager
 {
+    // The method on the Good model that returns these records.
     protected static string $relationship = 'drawings';
 
     protected static ?string $title = 'نقشه‌ها';
 
+    /** Empty on purpose: drawings are uploaded on the main form. */
     public function form(Schema $schema): Schema
     {
         return $schema->components([]);
@@ -37,6 +39,7 @@ class DrawingsRelationManager extends RelationManager
                     ->openUrlInNewTab(),
                 TextColumn::make('mime_type')
                     ->label('نوع فایل'),
+                // Stored in bytes, displayed in kilobytes.
                 TextColumn::make('size')
                     ->label('حجم')
                     ->formatStateUsing(fn (int $state): string => number_format($state / 1024, 1).' KB'),

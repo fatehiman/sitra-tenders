@@ -7,9 +7,18 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Storage;
 
+/**
+ * One uploaded file belonging to a tender.
+ *
+ * The file itself lives on disk (storage/app/public); this row only records
+ * where it is and what it was called. `disk` names the Laravel filesystem
+ * it was written to, so moving to S3 later would not need a schema change.
+ */
 #[Fillable(['bid_id', 'disk', 'path', 'original_name', 'mime_type', 'size'])]
 class BidAttachment extends Model
 {
+    // Attachments are never edited after upload, so there is no updated_at
+    // column. Telling Eloquent that stops it trying to write one.
     const UPDATED_AT = null;
 
     public function bid(): BelongsTo
@@ -28,6 +37,8 @@ class BidAttachment extends Model
     {
         $storage = Storage::disk($disk);
 
+        // Filament has already moved each upload into place by this point,
+        // so the file is on disk and we can ask it for its type and size.
         foreach ($paths as $path) {
             $bid->attachments()->create([
                 'disk' => $disk,

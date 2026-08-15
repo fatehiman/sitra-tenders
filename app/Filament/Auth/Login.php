@@ -18,6 +18,11 @@ use SensitiveParameter;
  */
 class Login extends BaseLogin
 {
+    /**
+     * Filament's base class calls this method "email" because that is what
+     * most apps use. We keep the method name (so the parent's login flow
+     * keeps working untouched) but return a mobile field instead.
+     */
     protected function getEmailFormComponent(): Component
     {
         return TextInput::make('mobile')
@@ -29,6 +34,12 @@ class Login extends BaseLogin
     }
 
     /**
+     * What gets handed to Laravel's authentication attempt — 'mobile'
+     * instead of the usual 'email'. The password is compared against the
+     * stored hash by Laravel; it is never looked up as a plain value.
+     *
+     * #[SensitiveParameter] keeps the raw password out of stack traces.
+     *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
@@ -40,6 +51,12 @@ class Login extends BaseLogin
         ];
     }
 
+    /**
+     * The message shown when login fails.
+     *
+     * It deliberately does not say WHICH half was wrong. "No such number"
+     * would let anyone check whether a given mobile has an account here.
+     */
     protected function throwFailureValidationException(): never
     {
         throw ValidationException::withMessages([

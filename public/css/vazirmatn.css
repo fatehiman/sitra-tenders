@@ -1,0 +1,108 @@
+/*
+ * ---------------------------------------------------------------------------
+ * Vazirmatn — the single font family used everywhere in this app.
+ * ---------------------------------------------------------------------------
+ *
+ * WHY THIS FILE EXISTS AND WHY IT IS PLAIN CSS IN public/
+ *
+ * The app has two completely separate stylesheets:
+ *
+ *   1. resources/css/app.css  -> compiled by Vite, used only by the
+ *      standalone (non-Filament) pages such as /register.
+ *   2. Filament's own compiled panel stylesheet, which ships inside the
+ *      package and is NOT built by our Vite pipeline.
+ *
+ * Both of them need the same @font-face declarations. Rather than declaring
+ * the font twice (and risking the two copies drifting apart), the font is
+ * declared once here, in a hand-written CSS file that lives directly in
+ * public/ so it can be linked with a plain <link> tag from either side:
+ *
+ *   - The Filament panel links it via `->font(..., url: asset(...))` in
+ *     app/Providers/Filament/AppPanelProvider.php.
+ *   - The standalone layout links it directly in
+ *     resources/views/components/layouts/app.blade.php.
+ *
+ * Because it is a static file (not processed by Vite) the URLs below are
+ * plain absolute paths, and the file is served as-is by the web server.
+ *
+ * NO EXTERNAL RESOURCES: the .woff2 files sit next to this file in
+ * public/fonts/vazirmatn/ and are committed to the repository. Nothing here
+ * ever reaches Google Fonts, Bunny Fonts, jsDelivr or any other CDN — this
+ * is a hard requirement for this project (the app must render identically
+ * on a machine with no internet access).
+ *
+ * FONT: Vazirmatn v33.0.3 by Saber Rastikerdar, licensed under the SIL Open
+ * Font License 1.1. The licence text is committed alongside the fonts at
+ * public/fonts/vazirmatn/OFL.txt. Vazirmatn is the maintained continuation
+ * of the older "Vazir" family by the same designer.
+ */
+
+/*
+ * The variable font: ONE file that contains every weight from 100 (Thin) to
+ * 900 (Black), which the browser interpolates on demand. 111 KB total —
+ * smaller than shipping four separate static weights, and it means any
+ * font-weight value Filament or Tailwind asks for renders correctly.
+ *
+ * The `src` lists the same file twice on purpose. It is the standard
+ * cross-browser incantation for variable web fonts: older browsers only
+ * understand the `woff2-variations` format keyword, newer ones understand
+ * `woff2 supports variations`. Whichever one the browser recognises wins;
+ * the other line is ignored. Only one download ever happens.
+ *
+ * `font-weight: 100 900` is a *range*, not a single value — that is what
+ * tells the browser this face can supply any weight in between.
+ *
+ * `font-display: swap` means: show the text immediately in a fallback font,
+ * then swap in Vazirmatn once it has loaded. Without it the page would show
+ * blank text for up to 3 seconds on a slow connection.
+ */
+@font-face {
+    font-family: 'Vazirmatn';
+    src: url('/fonts/vazirmatn/Vazirmatn-Variable.woff2') format('woff2 supports variations'),
+         url('/fonts/vazirmatn/Vazirmatn-Variable.woff2') format('woff2-variations');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+/*
+ * Fallback for the (now very rare) browsers with no variable-font support.
+ * `@supports not (...)` makes this whole block invisible to browsers that DO
+ * support variable fonts, so those browsers never download these files.
+ *
+ * Only the four weights the UI actually uses are shipped as static files:
+ * 400 body text, 500/600 labels and buttons, 700 headings.
+ */
+@supports not (font-variation-settings: normal) {
+    @font-face {
+        font-family: 'Vazirmatn';
+        src: url('/fonts/vazirmatn/Vazirmatn-Regular.woff2') format('woff2');
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: 'Vazirmatn';
+        src: url('/fonts/vazirmatn/Vazirmatn-Medium.woff2') format('woff2');
+        font-weight: 500;
+        font-style: normal;
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: 'Vazirmatn';
+        src: url('/fonts/vazirmatn/Vazirmatn-SemiBold.woff2') format('woff2');
+        font-weight: 600;
+        font-style: normal;
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: 'Vazirmatn';
+        src: url('/fonts/vazirmatn/Vazirmatn-Bold.woff2') format('woff2');
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+    }
+}

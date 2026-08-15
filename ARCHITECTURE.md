@@ -144,9 +144,18 @@ traceID 88f7qzuPmPaWzRX
 
 That is an **account-level** block on the msgway side (identity verification
 / احراز هویت not completed in their panel), not a balance problem and not
-something any code change can route around. Until it clears, no SMS will
-deliver even though `SMS_DRIVER=msgway` is correct and live. `SentSmsLog`
-records the failure with its `traceID` for the support ticket.
+something any code change can route around — a topped-up balance does not
+clear it. Until it clears, no SMS will deliver even though
+`SMS_DRIVER=msgway` is correct and live. `SentSmsLog` records the failure
+with its `traceID` for the support ticket. Re-confirmed live from the server
+on 2026-08-14 (traceID `W8d15WYZqVhvNud`) — same code, still blocked.
+
+Because that block is indistinguishable from a bug when the UI only says
+"try again", `OtpService::issue()` returns the gateway's `SmsResult` rather
+than a bool, and the registration page appends the provider's own reason in
+parentheses: «ارسال کد تایید با خطا مواجه شد… (حساب کاربری شما تایید نشده
+است)». The reason is whitespace-collapsed and length-capped; `error.code`
+and `traceID` stay in `sent_sms_log` rather than on screen.
 
 Local-dev note: PHP 8.4 on the shipping VPS resolves TLS fine, but a Windows
 PHP with no `curl.cainfo` / `openssl.cafile` in `php.ini` fails every msgway
@@ -172,9 +181,17 @@ is a dev-machine config gap, not an app bug — point PHP at a `cacert.pem`.
   call, not something the user asked for explicitly — a Jalali-aware input
   picker can replace the Gregorian one later if it matters enough to
   justify vetting a v4-compatible package.
-- کدملی (national ID, 10 digits) and شناسه ملی (company national ID, 11
-  digits) get dedicated Laravel validation rules implementing the standard
-  Iranian checksum algorithms, not just a digit-count/regex check.
+- کدملی (national ID, 10 digits) gets a dedicated Laravel validation rule
+  (`App\Rules\IranianNationalId`) implementing the standard Iranian
+  checksum, not just a digit-count/regex check.
+- شناسه ملی (company national ID, 11 digits) deliberately does **not**. It
+  is validated as `digits:11` + `unique` and nothing more. The
+  commonly-published company checksum rejected real, currently-issued IDs
+  and locked legitimate companies out of registering, so the rule class was
+  removed rather than left to fail closed on valid input. Both the public
+  registration form and the admin `UserForm` share this relaxed rule, and
+  `RegistrationTest` pins the behaviour with an 11-digit value that fails
+  the old checksum.
 - Mobile numbers are stored in local format (`09XXXXXXXXX`, unique,
   validated against the standard Iranian mobile regex) and converted to
   E.164 (`+98XXXXXXXXXX`) only at the SMS-gateway boundary, per the msgway
@@ -238,6 +255,58 @@ in the order the operator meets them:
 
 There is no bulk delete on the کالاها table for the same reason — a bulk
 action can only report one outcome for a mixed selection.
+
+## Typography: Vazirmatn, self-hosted, no external requests
+
+The app loads **no third-party resources at all** — no Google Fonts, no
+Bunny Fonts, no CDN. This is a hard constraint, not a preference: the site
+must render identically for a visitor whose network cannot reach those
+hosts, and font requests to a third party leak visitor IPs on every page.
+
+One family everywhere: **Vazirmatn v33.0.3** (Saber Rastikerdar, SIL OFL
+1.1 — the maintained continuation of the older "Vazir"). `OFL.txt` is
+committed next to the font files.
+
+**Tahoma is gone and must not come back.** It was previously the first
+entry in the standalone layout's inline `font-family`. Tahoma is a
+proprietary Microsoft font, absent on Linux and Android, so it produced a
+different — and noticeably worse — Persian rendering per platform, while
+also shadowing the webfont on the machines that did have it.
+
+Layout of the pieces:
+
+```
+public/fonts/vazirmatn/Vazirmatn-Variable.woff2   ← 111 KB, weights 100–900
+public/fonts/vazirmatn/Vazirmatn-{Regular,Medium,SemiBold,Bold}.woff2
+public/fonts/vazirmatn/OFL.txt
+public/css/vazirmatn.css                          ← the @font-face rules
+```
+
+`public/css/vazirmatn.css` is hand-written, static, and deliberately **not**
+processed by Vite. That is what lets both halves of the app link the same
+single definition with a plain `<link>`:
+
+- the panel, via `->font('Vazirmatn', url: asset('css/vazirmatn.css'),
+  provider: LocalFontProvider::class, preload: [...])` in
+  `AppPanelProvider`. `LocalFontProvider` is the key part — Filament's
+  default provider is `BunnyFontProvider`, which would fetch from a CDN.
+- the standalone `/register` layout, via a direct `<link>` plus
+  `--font-sans` in `resources/css/app.css` pointing Tailwind at the family.
+
+The variable font is the primary face (one file, every weight); the four
+static weights are only reached through `@supports not
+(font-variation-settings: normal)`, so modern browsers never download them.
+
+`vite.config.js` previously declared `bunny('Instrument Sans', ...)` via
+`laravel-vite-plugin/fonts`; that was removed. **Do not add a `fonts:`
+option back to the Vite config** — it emits CDN requests.
+
+One known leftover: Filament's published
+`public/js/filament/forms/components/markdown-editor.js` contains EasyMDE's
+auto-loader for Font Awesome from `maxcdn.bootstrapcdn.com`. This app uses
+`RichEditor`, never `MarkdownEditor`, so that asset is never loaded — but if
+a Markdown field is ever added, this becomes a live external request and
+needs handling.
 
 ## Panel CSS has no Tailwind utilities
 

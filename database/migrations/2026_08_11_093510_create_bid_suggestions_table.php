@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Run the migrations.
+     * پیشنهادها — a user's offer on a tender. Scaffold only for now: a
+     * single free-text note until the real business rules are specified.
      */
     public function up(): void
     {
@@ -18,6 +19,10 @@ return new class extends Migration
             $table->text('note')->nullable();
             $table->timestamp('created_at')->nullable();
 
+            // "One suggestion per tender per user", enforced by the database
+            // itself. The UI also hides the button once one exists, but this
+            // is the guarantee that survives double-clicks and race
+            // conditions the UI check cannot catch.
             $table->unique(['bid_id', 'user_id']);
         });
     }

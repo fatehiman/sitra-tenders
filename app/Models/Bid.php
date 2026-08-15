@@ -8,11 +8,28 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * A مناقصه (tender/bid) — the central object of the whole app.
+ *
+ * Note the class is called `Bid` while the UI everywhere says «مناقصه». The
+ * English name is only ever seen by developers; every user-visible label is
+ * Persian.
+ *
+ * `description` holds HTML produced by Filament's rich-text editor. It is
+ * always rendered back through Filament's RichContentRenderer rather than
+ * with raw {!! !!}, which strips anything the editor itself cannot produce
+ * (scripts, event handlers) — see ARCHITECTURE.md.
+ *
+ * Dates are stored as ordinary Gregorian datetimes; Jalali (Shamsi) is a
+ * display-only conversion applied when rendering.
+ */
 #[Fillable(['title', 'description', 'start_at', 'expire_at', 'created_by'])]
 class Bid extends Model
 {
     protected function casts(): array
     {
+        // Turn the raw datetime strings into Carbon objects so the code
+        // below can ask them questions like ->isFuture().
         return [
             'start_at' => 'datetime',
             'expire_at' => 'datetime',
@@ -23,12 +40,22 @@ class Bid extends Model
      * Scope applied to the `user` role's view only — started, not yet
      * expired. Admin/staff query the unscoped model to manage the full
      * lifecycle (scheduled/active/expired).
+     *
+     * A "scope" is a reusable piece of query. Naming it scopeActive() lets
+     * the rest of the app write `Bid::active()->get()` instead of repeating
+     * both where() clauses (and risking one of them being forgotten, which
+     * would expose unpublished tenders).
      */
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('start_at', '<=', now())->where('expire_at', '>', now());
     }
 
+    /**
+     * Persian status word derived from the two dates — there is no `status`
+     * column, because a stored status would need a scheduled job to keep it
+     * truthful as time passes. Computing it on read cannot go stale.
+     */
     public function getStatusLabelAttribute(): string
     {
         if ($this->start_at->isFuture()) {
@@ -42,11 +69,13 @@ class Bid extends Model
         return 'فعال';
     }
 
+    /** Who published it — 'created_by' is the foreign-key column name. */
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    /** Uploaded files: PDFs, Office documents, images, video, audio. */
     public function attachments(): HasMany
     {
         return $this->hasMany(BidAttachment::class);
@@ -60,6 +89,7 @@ class Bid extends Model
         return $this->hasMany(BidGoodRequirement::class);
     }
 
+    /** Bids submitted by users — one per user per tender (DB-enforced). */
     public function suggestions(): HasMany
     {
         return $this->hasMany(BidSuggestion::class);

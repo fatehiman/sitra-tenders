@@ -22,8 +22,12 @@ class AdminUserSeeder extends Seeder
 {
     public function run(): void
     {
+        // ?: means "use the left side unless it is empty/false".
         $password = env('ADMIN_SEED_PASSWORD') ?: Str::password(20, symbols: false);
 
+        // firstOrCreate: find the row matching the FIRST array, and only if
+        // it doesn't exist, create it using both arrays merged. That makes
+        // re-running the seeder harmless — it never overwrites a live admin.
         $admin = User::firstOrCreate(
             ['mobile' => '09120000000'],
             [
@@ -37,6 +41,8 @@ class AdminUserSeeder extends Seeder
             ]
         );
 
+        // Outside the firstOrCreate so an existing admin that somehow lost
+        // its role gets it back. assignRole is idempotent.
         $admin->assignRole(RoleName::Admin->value);
 
         // Only meaningful when the row was just created — an existing admin

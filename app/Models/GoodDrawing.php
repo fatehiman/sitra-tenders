@@ -7,9 +7,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Storage;
 
+/**
+ * One نقشه (technical drawing) file — a PDF or an image — attached to a
+ * good. Structurally identical to BidAttachment, on purpose: same upload
+ * pattern, same columns, so whoever learns one already knows the other.
+ */
 #[Fillable(['good_id', 'disk', 'path', 'original_name', 'mime_type', 'size'])]
 class GoodDrawing extends Model
 {
+    // Drawings are never edited in place, so there is no updated_at column.
     const UPDATED_AT = null;
 
     public function good(): BelongsTo

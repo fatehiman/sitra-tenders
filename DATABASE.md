@@ -19,7 +19,7 @@ No email column — login is by mobile number, not email (see
 | `national_id` | string(10), unique | کدملی — validated with the Iranian checksum algorithm, not just digit count |
 | `person_type` | enum(`individual`,`company`) | حقیقی / حقوقی |
 | `company_name` | string, nullable | required (and only settable) when `person_type = company`; presence drives display everywhere — see accessor in ARCHITECTURE.md |
-| `company_national_id` | string(11), nullable | شناسه ملی — required when `person_type = company`, own checksum algorithm |
+| `company_national_id` | string(11), nullable | شناسه ملی — required (and unique) when `person_type = company`. **Format-only validation: any 11-digit number is accepted, no checksum** — the published company checksum rejects real IDs. See PLAN.md's open items. |
 | `password` | string (hashed) | |
 | `mobile_verified_at` | timestamp, nullable | set on OTP success, or immediately for admin-created accounts |
 | `created_by` | bigint FK → users.id, nullable | set when an admin creates the account directly (registration-flow accounts leave this null) |

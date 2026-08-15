@@ -10,8 +10,16 @@ use Illuminate\Support\Facades\Hash;
 /**
  * @extends Factory<User>
  */
+/**
+ * Builds throwaway User records for tests, e.g. `User::factory()->create()`.
+ *
+ * Nothing here runs in production — it exists so tests can say "a company
+ * user exists" in one line instead of listing every column.
+ */
 class UserFactory extends Factory
 {
+    // Hashing is deliberately slow (that is the point of bcrypt), so the
+    // hash is computed once and reused across every user a test creates.
     protected static ?string $password;
 
     /**
@@ -31,15 +39,23 @@ class UserFactory extends Factory
         ];
     }
 
+    /**
+     * A «حقوقی» (company) user: `User::factory()->company()->create()`.
+     *
+     * A "state" is a named set of overrides layered on top of definition().
+     * The شناسه ملی is just eleven random digits, which is all the app
+     * validates — no checksum is applied to it anywhere.
+     */
     public function company(): static
     {
         return $this->state(fn (array $attributes) => [
             'person_type' => PersonType::Company,
             'company_name' => fake()->company(),
-            'company_national_id' => fake()->numerify('##########0'),
+            'company_national_id' => fake()->numerify('###########'),
         ]);
     }
 
+    /** A user whose mobile has not been confirmed yet. */
     public function unverified(): static
     {
         return $this->state(fn (array $attributes) => [
@@ -54,6 +70,8 @@ class UserFactory extends Factory
      */
     private static function validNationalId(): string
     {
+        // Nine random digits, then compute the tenth so the whole number
+        // satisfies the checksum — the same arithmetic the rule performs.
         $digits = array_map(fn () => random_int(0, 9), range(1, 9));
 
         $sum = 0;

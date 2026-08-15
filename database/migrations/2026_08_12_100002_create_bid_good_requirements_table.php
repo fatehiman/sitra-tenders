@@ -20,9 +20,12 @@ return new class extends Migration
             $table->id();
             $table->foreignId('bid_id')->constrained('bids')->cascadeOnDelete();
             $table->foreignId('good_id')->constrained('goods')->restrictOnDelete();
+            // unsigned = never negative. Plain counts, no unit of measure.
             $table->unsignedInteger('quantity');
             $table->timestamps();
 
+            // The same good can only be listed once per tender — two rows
+            // for one good would make the required quantity ambiguous.
             $table->unique(['bid_id', 'good_id']);
         });
     }

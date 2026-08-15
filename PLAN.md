@@ -26,7 +26,8 @@ updated as work lands — it's the source of truth for "what's left."
       column)
 - [x] `RoleSeeder` (admin/staff/user) + a throwaway local `AdminUserSeeder`
       (password must be rotated immediately outside of local dev)
-- [x] Iranian کدملی / شناسه ملی checksum validation rules
+- [x] Iranian کدملی checksum validation rule (شناسه ملی is format-only —
+      exactly 11 digits, no checksum; see the note under "Open items")
 - [x] Custom Filament Login page authenticating by `mobile`
 - [x] `UserResource` (admin-only): list all users, create user/staff
       directly with `mobile_verified_at` stamped immediately, no OTP;
@@ -183,12 +184,18 @@ updated as work lands — it's the source of truth for "what's left."
 
 ## Open items to revisit later (not blocking v1)
 
-- `App\Rules\IranianCompanyNationalId` (شناسه ملی checksum) is implemented
-  from commonly-cited community references, not verified against an
-  authoritative source — sanity-check it against known-valid شناسه ملی
-  values before trusting it to hard-reject real company registrations.
+- **شناسه ملی is no longer checksum-validated — this was decided, not
+  overlooked.** `App\Rules\IranianCompanyNationalId` implemented the
+  commonly-cited community checksum, which turned out to reject real,
+  currently-issued company IDs and so blocked legitimate registrations. The
+  rule class was deleted; both the public registration form and the admin
+  `UserForm` now validate `company_national_id` with `digits:11` plus the
+  existing uniqueness check, and `RegistrationTest` asserts an arbitrary
+  11-digit value is accepted so nobody re-adds the checksum by mistake.
+  If a verified algorithm is ever obtained from an authoritative source it
+  can go back in — as a warning, ideally, not a hard reject.
   `App\Rules\IranianNationalId` (کدملی) uses the well-documented individual
-  checksum and is on firmer ground.
+  checksum and stays.
 
 - Whether a 4th role is needed, and what it can do (mentioned as a
   possibility, not specified)

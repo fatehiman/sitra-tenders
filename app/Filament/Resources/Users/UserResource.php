@@ -14,6 +14,13 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 
+/**
+ * The کاربران (users) section — list, create and edit every account.
+ *
+ * Admin-only (see App\Policies\UserPolicy). This is also where staff
+ * accounts are created, which is the one path that bypasses the SMS OTP
+ * flow entirely — see CreateUser.
+ */
 class UserResource extends Resource
 {
     protected static ?string $model = User::class;
@@ -38,6 +45,7 @@ class UserResource extends Resource
         return UsersTable::configure($table);
     }
 
+    /** No sub-tables on the user edit page — nothing useful to show yet. */
     public static function getRelations(): array
     {
         return [

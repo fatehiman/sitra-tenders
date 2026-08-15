@@ -7,6 +7,11 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Schema;
 
+/**
+ * The create/edit form for a کالا. Structurally the same as BidForm, minus
+ * the requirement rows — including the "upload here, list in the relation
+ * manager" split for the نقشه files.
+ */
 class GoodForm
 {
     /**
@@ -22,6 +27,8 @@ class GoodForm
     {
         return $schema
             ->components([
+                // کد کالا is how operators refer to an item in conversation
+                // and on paper, so it must identify exactly one row.
                 TextInput::make('code')
                     ->label('کد کالا')
                     ->required()
@@ -39,6 +46,8 @@ class GoodForm
                     ->required()
                     ->rows(4)
                     ->columnSpanFull(),
+                // As in BidForm, 'new_drawings' is not a column — the page
+                // classes turn the uploaded paths into GoodDrawing rows.
                 FileUpload::make('new_drawings')
                     ->label('نقشه')
                     ->helperText('یک یا چند فایل PDF یا تصویر')

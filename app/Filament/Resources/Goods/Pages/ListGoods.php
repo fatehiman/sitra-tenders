@@ -6,6 +6,7 @@ use App\Filament\Resources\Goods\GoodResource;
 use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 
+/** The کالاها list screen. Columns and the delete guard live in GoodsTable. */
 class ListGoods extends ListRecords
 {
     protected static string $resource = GoodResource::class;

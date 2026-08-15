@@ -30,6 +30,9 @@ class MsgwaySmsDriver implements SmsGateway
 
     public function send(string $mobile, string $templateKey, array $params = []): SmsResult
     {
+        // A missing template is a programming/config mistake, not a runtime
+        // condition a user can cause — so it throws rather than returning a
+        // failure result, and shows up loudly in development.
         if (! array_key_exists($templateKey, $this->templates)) {
             throw new InvalidArgumentException("No msgway template configured for [{$templateKey}].");
         }
@@ -45,6 +48,10 @@ class MsgwaySmsDriver implements SmsGateway
             'mobile' => $this->toE164($mobile),
             'method' => 'sms',
             'templateID' => (int) $this->templates[$templateKey],
+            // array_values() drops the string keys, so this serialises to a
+            // JSON array ["a","b"] and not an object {"x":"a"}. msgway
+            // rejects the object form — this is one of the two documented
+            // gotchas mentioned in the class docblock.
             'params' => array_values($params), // positional, never an object
         ];
 
@@ -58,6 +65,8 @@ class MsgwaySmsDriver implements SmsGateway
                 'Content-Type' => 'application/json; charset=utf-8',
             ])->timeout($this->timeoutSeconds)->post("{$this->baseUrl}/send", $payload);
         } catch (Throwable $e) {
+            // The request never completed: DNS, TLS, timeout, no network.
+            // Distinct from "msgway answered and said no", handled below.
             Log::warning('sms.msgway.transport_error', [
                 'mobile' => $mobile, 'template' => $templateKey, 'error' => $e->getMessage(),
             ]);
@@ -67,6 +76,8 @@ class MsgwaySmsDriver implements SmsGateway
 
         $body = $response->json() ?? [];
 
+        // msgway signals success in the BODY, not with the HTTP status code
+        // — a rejected send can still arrive as HTTP 200.
         if (($body['status'] ?? null) === 'success') {
             return SmsResult::success(referenceId: $body['referenceID'] ?? null);
         }

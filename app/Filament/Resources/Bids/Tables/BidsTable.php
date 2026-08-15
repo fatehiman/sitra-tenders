@@ -27,22 +27,43 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Morilog\Jalali\Jalalian;
 
+/**
+ * The مناقصات list table: its columns, and the buttons on each row.
+ *
+ * This is the single most role-sensitive file in the app — the same table
+ * serves admins, staff and regular users, showing each of them a different
+ * set of rows, columns and buttons.
+ */
 class BidsTable
 {
     public static function configure(Table $table): Table
     {
         return $table
+            /*
+             * THE most important line here: regular users only ever see
+             * tenders that have already started and have not yet expired.
+             *
+             * Bid::active() is the scope holding those two date conditions.
+             * Admin and staff get the query untouched, so they can see
+             * scheduled and finished tenders and manage the full lifecycle.
+             */
             ->modifyQueryUsing(fn (Builder $query) => Auth::user()->hasRole(RoleName::User->value)
                 ? $query->active()
                 : $query)
             ->columns([
                 TextColumn::make('title')
                     ->label('عنوان')
+                    // Adds this column to the table's search box.
                     ->searchable(),
+                // Reads Bid::getStatusLabelAttribute(). Pointless for regular
+                // users, who by definition only ever see «فعال» rows.
                 TextColumn::make('status_label')
                     ->label('وضعیت')
                     ->badge()
                     ->visible(fn () => ! Auth::user()->hasRole(RoleName::User->value)),
+                // Stored Gregorian, shown Jalali — the conversion happens
+                // here, at the point of display, and nowhere else. Sorting
+                // still uses the real column, so it stays correct.
                 TextColumn::make('start_at')
                     ->label('شروع')
                     ->formatStateUsing(fn ($state) => Jalalian::fromDateTime($state)->format('Y/m/d H:i'))
@@ -51,10 +72,13 @@ class BidsTable
                     ->label('پایان')
                     ->formatStateUsing(fn ($state) => Jalalian::fromDateTime($state)->format('Y/m/d H:i'))
                     ->sortable(),
+                // The dot means "follow the creator relationship, then read
+                // display_name from it" — company name, or person's name.
                 TextColumn::make('creator.display_name')
                     ->label('ایجادکننده')
                     ->visible(fn () => ! Auth::user()->hasRole(RoleName::User->value)),
             ])
+            // Buttons at the end of each row.
             ->recordActions([
                 self::viewDetailsAction(),
                 self::viewGoodsAction(),
@@ -62,6 +86,7 @@ class BidsTable
                     ->visible(fn () => ! Auth::user()->hasRole(RoleName::User->value)),
                 self::suggestAction(),
             ])
+            // Buttons above the table, acting on checkbox-selected rows.
             ->toolbarActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),
@@ -82,8 +107,9 @@ class BidsTable
         return Action::make('viewDetails')
             ->label('مشاهده')
             ->icon(Heroicon::OutlinedEye)
-            ->iconButton()
+            ->iconButton()          // icon only, no text label on the row
             ->modalHeading(fn (Bid $record): string => $record->title)
+            // ->schema() here describes the MODAL's contents, not a form.
             ->schema([
                 TextEntry::make('start_at')
                     ->label('تاریخ و ساعت شروع')
@@ -101,6 +127,8 @@ class BidsTable
                     ->prose()
                     ->columnSpanFull(),
             ])
+            // No save button — this modal is read-only, so the only way out
+            // is the «بستن» (close) button.
             ->modalSubmitAction(false)
             ->modalCancelActionLabel('بستن');
     }
@@ -117,6 +145,8 @@ class BidsTable
             ->modalHeading(fn (Bid $record): string => "کالاهای مورد نیاز — {$record->title}")
             ->modalWidth(Width::FiveExtraLarge)
             ->schema([
+                // RepeatableEntry renders one block per related row — here,
+                // one line per «کالای مورد نیاز», laid out as a table.
                 RepeatableEntry::make('goodRequirements')
                     ->hiddenLabel()
                     ->placeholder('برای این مناقصه هنوز کالایی تعریف نشده است.')
@@ -182,8 +212,11 @@ class BidsTable
                         ]),
                 ]),
             ])
+            // ->action() is what runs when the modal is submitted. $data
+            // holds the validated field values from the wizard above.
             ->action(function (array $data, Bid $record): void {
                 $record->suggestions()->create([
+                    // Taken from the session, never from the form.
                     'user_id' => Auth::id(),
                     'note' => $data['note'],
                 ]);

@@ -182,6 +182,37 @@ updated as work lands — it's the source of truth for "what's left."
       quantities are integer counts by explicit decision; a bulk
       import/export for the goods catalogue; per-row notes on a requirement
 
+## Phase 8 — Vazirmatn, relaxed شناسه ملی, codebase comments (2026-08-15)
+
+- [x] Self-hosted **Vazirmatn** v33.0.3 (SIL OFL) replaces Tahoma and the
+      Bunny Fonts CDN fetch. One static `public/css/vazirmatn.css` carries
+      the `@font-face` rules and is linked by both the panel (Filament's
+      `LocalFontProvider`, replacing the CDN-backed default) and the
+      standalone `/register` layout. See
+      [ARCHITECTURE.md](ARCHITECTURE.md#typography-vazirmatn-self-hosted-no-external-requests)
+- [x] شناسه ملی relaxed to `digits:11` + `unique`; the checksum rule class
+      deleted, two tests added to pin it (see "Open items" below)
+- [x] Beginner-oriented comment pass over every source file; recorded as a
+      standing convention in README.md
+- [x] **Deployed to `https://sitra.ir` 2026-08-15.** Tarball over SSH as
+      before. Verified: `/` → 302, `/login` and `/register` → 200,
+      `dir="rtl"` intact, `--font-family: 'Vazirmatn'` in the panel shell,
+      `/css/vazirmatn.css` and the 111 KB `.woff2` both 200, no Tahoma and
+      no external font host anywhere in the live HTML, `digits:11`
+      confirmed accepting/rejecting correctly via tinker on the box,
+      everything `sitra`-owned, zero log entries after the deploy.
+- [x] **Two deploy mistakes worth not repeating** — both now written up
+      under [ARCHITECTURE.md](ARCHITECTURE.md#deploy-pitfalls-both-hit-for-real):
+      shipping `bootstrap/cache/` 500'd the whole site for ~2 minutes
+      (local `packages.php` referenced `laravel-lang/lang`, a `require-dev`
+      package absent from the server's `--no-dev` vendor), and deleting a
+      class file needed a `composer dump-autoload` to clear the stale
+      classmap entry. Both fixed; the log shows errors only inside that
+      window.
+- [x] Confirmed the SSH route has changed: port 22 is directly reachable
+      now, the `Ger1` proxy session no longer works, and deploys go through
+      the `Ger1-root` key with every command wrapped in `sudo -u sitra`.
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not

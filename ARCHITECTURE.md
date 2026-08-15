@@ -363,13 +363,34 @@ before touching anything:
   works via `plink.exe -ssh -batch -pw '<password>' sitra@162.55.167.140
   '<command>'` (PuTTY's CLI client, already installed) — `sshpass` is not
   installed and wasn't needed.
-- **Port 22 is not reachable directly from the dev machine's network.** The
-  saved PuTTY session (`Ger1`) routes through an HTTP proxy on
-  `127.0.0.1:10809` — i.e. a local proxy/VPN client (v2rayN or similar) must
-  be running before any `plink`/`pscp` deploy step will connect; without it
-  the connection just times out. Plain HTTPS to `https://sitra.ir` works
-  without the proxy, so "the site loads but SSH hangs" is the expected
-  symptom, not a server fault.
+- **Port 22 is now reachable directly** (re-verified 2026-08-15) — the dev
+  IP was whitelisted, so the HTTP proxy on `127.0.0.1:10809` that the saved
+  PuTTY session `Ger1` routes through is **no longer required**. Loading
+  that session now *fails* ("Connection refused") whenever the local
+  proxy/VPN client isn't running; connect directly instead.
+- **How to authenticate:** there is no password or key for the `sitra` SSH
+  user on the dev machine (`ssh sitra@...` → `Permission denied`). Use the
+  root key instead — `~/.ssh/config` defines `Ger1-root`
+  (`id_ed25519_ger1_root`), which works non-interactively. **Run every
+  deploy command through `sudo -u sitra`** so nothing lands root-owned;
+  after any file operation, `find $APP -not -user sitra -print -quit`
+  should print nothing.
+
+### Deploy pitfalls (both hit for real)
+
+- **Never ship `bootstrap/cache/` to the server.** It is generated, and the
+  local copy lists dev-only packages. `laravel-lang/lang` is in
+  `require-dev`, so the server's `--no-dev` vendor has no
+  `LaravelLang\Config\ServiceProvider` — shipping the local `packages.php`
+  took the whole site to HTTP 500 on every route until those files were
+  deleted. Exclude `bootstrap/cache` from the tarball. (`storage`, `.env`,
+  `vendor`, `tests` are already excluded for the same class of reason.)
+- **Deleting a class file needs `composer dump-autoload` on the server.**
+  Removing `app/Rules/IranianCompanyNationalId.php` left a stale entry in
+  the optimized classmap, so any `class_exists()` on it emitted
+  `Failed to open stream` warnings. Fix:
+  `sudo -u sitra composer dump-autoload --optimize --no-dev`. Note this
+  clears the compiled views, so re-run `php artisan optimize` afterwards.
 
 ## Security notes
 

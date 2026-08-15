@@ -245,6 +245,35 @@ updated as work lands — it's the source of truth for "what's left."
       (panel width; Jalali + the `goToNextWizardStep()` testing trap), index
       updated
 
+## Phase 10 — bid lifecycle, tender locking, two form bugs (2026-08-15)
+
+- [x] **Enter no longer submits the registration wizard.** Pressing Enter on
+      step 1 or 2 ran `register()` (the last step's action), failed the OTP
+      window check and bounced back to step 1. One `extraAttributes` handler
+      on the `Wizard` makes Enter call the Alpine component's own
+      `requestNextStep()` instead — see
+      [ARCHITECTURE.md](ARCHITECTURE.md#the-enter-key-means-بعدی-not-ثبتنام)
+- [x] **The eye modal now lists the tender's attachments** under the
+      description, each with its own download link
+- [x] **پیشنهاد lifecycle.** `bid_suggestions` gained `status`,
+      `submitted_at`, `cancelled_at`, `cancelled_by`, `cancel_reason`;
+      `App\Enums\SuggestionStatus` holds every step, including the four that
+      the future admin review screens will set. The tenders table shows the
+      user their own submission time and status
+- [x] **Read-only «مشاهده پیشنهاد»** for the user, and «پیشنهادهای دریافتی»
+      for staff/admin
+- [x] **Tenders lock on first bid** — `BidPolicy::update()`/`delete()` refuse
+      them (admins included), with a lock icon explaining the missing
+      «ویرایش» button rather than a silent gap
+- [x] **«لغو» (admin only)** cancels selected bids with an optional reason,
+      unlocking the tender and letting those users bid again
+- [x] **Admin user form: switching to حقوقی now reveals نام شرکت / شناسه
+      ملی.** `->options(PersonType::class)` attaches an enum state cast, so
+      `$get('person_type')` returned a `PersonType` object and the
+      `=== 'company'` string check never matched
+- [x] Six new tests (bid lifecycle + lock + the person-type regression);
+      43 passing
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not
@@ -265,7 +294,12 @@ updated as work lands — it's the source of truth for "what's left."
 - Whether OTP is ever needed for **login** (not just registration) or for
   password reset — today password reset has no spec at all; flag to the
   user before building it
-- Full پیشنهاد (suggestion) workflow beyond the scaffold (review states,
-  notifications to staff/admin, editing/withdrawal rules)
+- **The admin review flow — Form الف and Form ب — is specified later.** The
+  status ladder that flow drives already exists
+  (`App\Enums\SuggestionStatus`): opening Form الف for a bid should move it
+  to `form_a`, opening Form ب to `form_b`, and accepting/rejecting to
+  `approved`/`rejected`. `BidsTable::viewSuggestionsAction()` is where those
+  screens attach. Also still open: what a پیشنهاد actually contains beyond
+  the free-text note (per-good pricing?), and notifications to staff/admin
 - Whether Redis should be adopted for queue/cache if tender volume or
   attachment processing grows enough to matter

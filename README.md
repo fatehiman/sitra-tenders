@@ -44,11 +44,22 @@ This is the project's entry-point doc. See also:
    (it matches شرح کالا *or* کد کالا, shown as «نام (کد)»), enter a count,
    add the row. e.g. «۱۰۰۰ عدد پیچ کد ۸۳۷۲۴».
 8. **Regular users** only see tenders that have started and not yet expired.
-   Every tender row carries an eye icon (title, description, start/end in a
-   modal) and a clipboard icon (its goods requirements, with نقشه download
-   links). Users can submit **one suggestion per tender** — scaffolded for
-   now as a button that opens a wizard-style modal (no deep business logic
-   yet).
+   Every tender row carries an eye icon (title, description, **attachments**,
+   start/end in a modal) and a clipboard icon (its goods requirements, with
+   نقشه download links).
+9. **پیشنهادها (bids/offers)** — a user submits **one per tender** (the
+   contents are still a single free-text field until Form الف / Form ب are
+   specified). Around that scaffold the lifecycle is real:
+   - the tenders table shows the user their «ارسال پیشنهاد» date-time (a
+     dash until they bid) and «وضعیت پیشنهاد»: ارسال نشده → ارسال شده →
+     دردست بررسی once the tender closes → فرم الف → فرم ب → تایید شده / رد
+     شده. The last four are **not set by anything yet** — the admin review
+     screens are future work; see `App\Enums\SuggestionStatus`;
+   - a read-only «مشاهده پیشنهاد» action re-opens a submitted bid;
+   - **a tender with a live bid is locked** — nobody, admin included, can
+     edit or delete it, so the terms cannot change under a submitted offer;
+   - **«لغو» (admin only)** cancels bids on a tender: it unlocks it and
+     lets those users bid again.
 
 ## Tech stack
 

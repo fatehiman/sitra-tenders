@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\Auth;
 
 /**
  * A مناقصه (tender/bid) — the central object of the whole app.
@@ -93,5 +95,52 @@ class Bid extends Model
     public function suggestions(): HasMany
     {
         return $this->hasMany(BidSuggestion::class);
+    }
+
+    /**
+     * The same list minus the cancelled ones — i.e. the bids that still
+     * count. This is the relationship every rule below is written against.
+     */
+    public function activeSuggestions(): HasMany
+    {
+        return $this->suggestions()->active();
+    }
+
+    /**
+     * THIS tender's bid by THIS logged-in user, or null.
+     *
+     * A `hasOne` narrowed to the current session's user id. Defining it as a
+     * relationship rather than a helper method is what lets the مناقصات
+     * table eager-load it («->with('mySuggestion')»): one extra query for the
+     * whole page instead of one per row.
+     *
+     * Because the id is read at call time, this relationship is meaningless
+     * for a guest or in a queued job — it is only ever used from the panel,
+     * which is behind auth.
+     */
+    public function mySuggestion(): HasOne
+    {
+        return $this->hasOne(BidSuggestion::class)->where('user_id', Auth::id());
+    }
+
+    /**
+     * Is this tender frozen because somebody has already bid on it?
+     *
+     * Once a user submits a bid, the terms they bid against must not change
+     * underneath them, so App\Policies\BidPolicy refuses update() and
+     * delete() for locked tenders — for admin and staff alike. An admin can
+     * unlock one by cancelling the bids («لغو» on the مناقصات table).
+     *
+     * The relationLoaded() branch keeps the مناقصات table at one query: the
+     * table already loads a count, so re-asking the database per row would
+     * be pure waste.
+     */
+    public function isLocked(): bool
+    {
+        if ($this->relationLoaded('activeSuggestions')) {
+            return $this->activeSuggestions->isNotEmpty();
+        }
+
+        return $this->activeSuggestions()->exists();
     }
 }

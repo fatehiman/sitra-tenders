@@ -161,11 +161,11 @@ The `restrictOnDelete` is the backstop, not the user-facing behaviour: the
 naming the tenders that use the good (see
 [ARCHITECTURE.md](ARCHITECTURE.md#کالاها-goods-module)).
 
-## `bid_suggestions` (پیشنهادات — scaffold only)
+## `bid_suggestions` (پیشنهادات)
 
-Per the explicit requirement, this is intentionally minimal for now: enough
-to record that a suggestion was made and enforce "once per tender", not a
-full suggestion-review workflow.
+The *content* of a پیشنهاد is still deliberately minimal — one free-text
+note — because the real bid contents (Form الف / Form ب) are not specified
+yet. The *lifecycle* around it is real.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -173,10 +173,26 @@ full suggestion-review workflow.
 | `bid_id` | bigint FK → bids.id | |
 | `user_id` | bigint FK → users.id | |
 | `note` | text, nullable | free-text field collected by the scaffold modal |
-| `created_at` | timestamp | |
+| `status` | varchar(20), indexed, default `submitted` | `App\Enums\SuggestionStatus`: `submitted`, `form_a`, `form_b`, `approved`, `rejected`, `cancelled`. A string, not a MySQL ENUM, so adding a review step later is a code change |
+| `submitted_at` | timestamp, nullable | when the user pressed submit — **not** `created_at`, because a cancelled row is reused if the user bids again |
+| `cancelled_at` | timestamp, nullable | set by the admin's «لغو» action |
+| `cancelled_by` | bigint FK → users.id, nullable, nullOnDelete | which admin cancelled it |
+| `cancel_reason` | varchar(500), nullable | optional free text from the cancel modal |
+| `created_at` | timestamp | row creation; no `updated_at` |
 
 Unique constraint on `(bid_id, user_id)` — enforces "only once per tender"
-at the data layer regardless of what the UI does.
+at the data layer regardless of what the UI does. **This is why cancelling
+does not create a second row:** a user re-bidding on a tender whose previous
+bid was cancelled reuses the same row (`BidSuggestion::resubmit()`), which
+overwrites the previous cancellation's who/when/why. If a full audit trail
+is ever required, add a history table — do not drop this index.
+
+Two rules read this table rather than storing their answer:
+
+- **«ارسال نشده» is the absence of a row** (or a cancelled one), not a
+  status value.
+- **«دردست بررسی» is `submitted` + the tender's `expire_at` in the past** —
+  derived on read for the same reason `bids` has no `status` column.
 
 ## Standard Laravel tables (unchanged)
 

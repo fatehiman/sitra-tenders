@@ -98,6 +98,32 @@ subclasses Filament's own `Auth\Pages\Register`:
 No `users` row exists until step 3 succeeds, so an abandoned or failed
 registration leaves nothing to clean up.
 
+### The Enter key means «بعدی», not «ثبت‌نام»
+
+Pressing Enter in a text input submits the surrounding `<form>`, and this
+form's submit handler is `register()` — the *last* step's action. So typing a
+mobile number on step 1 and hitting Enter ran a whole registration attempt,
+which failed the OTP-window check and bounced the visitor back to step 1 with
+an error. In a one-field step, Enter is the natural key to press, so this was
+hit constantly.
+
+The fix is one attribute on the `Wizard`:
+
+```php
+->extraAttributes([
+    'x-on:keydown.enter' => 'if (! isLastStep()) { $event.preventDefault(); requestNextStep() }',
+])
+```
+
+`extraAttributes` are merged onto the wizard's own root `<div>`, which is the
+element carrying Filament's Alpine component — so `isLastStep()` and
+`requestNextStep()` are that component's own methods
+(`vendor/filament/schemas/resources/js/components/wizard.js`), and
+`requestNextStep()` is exactly what «بعدی» calls. Enter therefore validates
+the step and sends the SMS / checks the code just like the button does, while
+still submitting normally on the last step. `PageRendersTest` asserts the
+handler is in the rendered page.
+
 ### Why the order changed
 
 The original build was a single page, per an explicit requirement at the
@@ -144,6 +170,20 @@ explicit that admin-created accounts need no mobile confirmation.
 ```php
 return $this->company_name ?: trim("{$this->first_name} {$this->last_name}");
 ```
+
+### `->options(SomeEnum::class)` hands back an object, not a string
+
+A trap worth knowing, because it produced a real bug: giving a Filament
+`Select` an enum class for its options makes Filament attach an **enum state
+cast** to that field (`Select::getEnumDefaultStateCast()`). `$get('person_type')`
+then returns a `PersonType` **instance**, so the obvious
+`$get('person_type') === PersonType::Company->value` is comparing an object
+with a string and is never true — in `UserForm` that left نام شرکت and
+شناسه ملی permanently hidden when an admin switched a user to حقوقی.
+
+`UserForm::isCompany()` now normalises both shapes. The public registration
+form never had the bug because it uses a `Radio` with plain string keys, which
+gets no state cast. If a `Select` there is ever swapped in, this applies.
 
 `person_type` (`individual`/`company`) drives which fields the registration
 form requires; `company_name` being non-null is what actually flips display
@@ -314,14 +354,47 @@ is a dev-machine config gap, not an app bug — point PHP at a `cacert.pem`.
   side and squeezed both the rich-text editor and the goods table into half
   the page. The inner `Section` keeps its own `->columns(2)`.
 - Two read-only record actions on the bids table, visible to **every** role:
-  an eye icon (title / description / start / end) and a clipboard icon (the
-  requirement rows). Both are built from **infolist entries**, not Blade
-  views — see [Panel CSS](#panel-css-has-no-tailwind-utilities).
-- `BidSuggestion` — **scaffold only**, per the explicit requirement: a
-  table + a "ارسال پیشنهاد" button on the tenders list that opens a
-  Filament wizard-modal action collecting a single free-text field for now.
-  A unique DB constraint on `(bid_id, user_id)` enforces "one suggestion per
-  tender" at the data layer even before the full business flow exists.
+  an eye icon (title / description / **attachments** / start / end) and a
+  clipboard icon (the requirement rows). Both are built from **infolist
+  entries**, not Blade views — see
+  [Panel CSS](#panel-css-has-no-tailwind-utilities). The attachment list is
+  the same "state is the model, not a string" trick the نقشه links use, so
+  each filename carries its own download URL.
+
+## پیشنهاد (bid/offer) lifecycle
+
+The *contents* of a پیشنهاد are still a scaffold — one free-text note —
+because Form الف and Form ب are specified later. Everything around it is
+built:
+
+- `App\Enums\SuggestionStatus` holds the ladder: `submitted` → `form_a` →
+  `form_b` → `approved`, with `rejected` reachable from any step and
+  `cancelled` sitting outside it. **`form_a`/`form_b`/`approved`/`rejected`
+  are TODO cases — nothing sets them yet**, by design: the admin review
+  screens are future work, and the enum documents the target shape so the
+  status column does not have to be redesigned when they arrive.
+- Two labels are **derived, never stored**, for the same reason `bids` has
+  no `status` column — a stored value would go stale with the clock:
+  «ارسال نشده» is the absence of a live row, and «دردست بررسی» is a
+  `submitted` row whose tender has expired (`BidSuggestion::getStatusLabel()`).
+- The مناقصات table shows a user their own bid's «ارسال پیشنهاد» time and
+  «وضعیت پیشنهاد», via `Bid::mySuggestion()` — a `hasOne` narrowed to
+  `Auth::id()` so the whole page costs one extra query rather than one per
+  row. Staff/admin instead see a live-bid count and the bidders themselves.
+- **A tender with any non-cancelled bid is locked**: `BidPolicy::update()`
+  and `delete()` both return false (`Bid::isLocked()`), for admins too, so
+  the terms a user bid against cannot change underneath them. The rule lives
+  in the policy, which means the `/bids/{id}/edit` URL is refused and not
+  just the button hidden — and `BidsTable` renders a lock icon where
+  «ویرایش» would be, because a silently missing button reads as a bug.
+- **«لغو» is the only unlock**, and it is admin-only (staff manage tenders
+  but do not cancel other people's bids). It marks the chosen bids
+  «لغو شده» with who/when/why, frees the tender, and lets those users bid
+  again. Re-bidding reuses the same row — see
+  [DATABASE.md](DATABASE.md#bid_suggestions-پیشنهادات) for why that is a
+  consequence of the unique index and what it costs.
+- A cancelled bid is invisible to its owner as a bid: the table shows
+  «ارسال نشده» again and the «ارسال پیشنهاد» button returns.
 
 ## کالاها (Goods) module
 

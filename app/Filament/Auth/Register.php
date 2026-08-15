@@ -120,7 +120,36 @@ class Register extends BaseRegister
                     // let someone jump to step 3 without ever passing the OTP
                     // step, because Wizard::nextStep() only validates the
                     // current step when it is NOT skippable.
-                    ->skippable(false),
+                    ->skippable(false)
+                    /*
+                     * Make the Enter key mean «بعدی», not «ثبت‌نام».
+                     *
+                     * THE BUG THIS FIXES: pressing Enter in a text input
+                     * submits the surrounding <form>, and this form's submit
+                     * handler is register() — the FINAL step's action. So
+                     * typing a mobile number and hitting Enter on step 1 (or
+                     * the code on step 2) ran a full registration attempt,
+                     * which failed the OTP check and threw the visitor back
+                     * to step 1. Enter is the natural key to press in a
+                     * one-field step, so this was hit constantly.
+                     *
+                     * These attributes are merged onto the wizard's own root
+                     * <div>, which is the element carrying Filament's Alpine
+                     * component — so isLastStep() and requestNextStep() below
+                     * are that component's own methods (see
+                     * vendor/filament/schemas/resources/js/components/wizard.js).
+                     * requestNextStep() is exactly what the «بعدی» button
+                     * calls, so Enter now validates the step and sends the
+                     * SMS / checks the code just like clicking it does.
+                     *
+                     * On the last step nothing is prevented, so Enter still
+                     * submits the registration as expected. The listener sits
+                     * on the wrapper and catches the keypress as it bubbles
+                     * up from whichever input has focus.
+                     */
+                    ->extraAttributes([
+                        'x-on:keydown.enter' => 'if (! isLastStep()) { $event.preventDefault(); requestNextStep() }',
+                    ]),
             ]);
     }
 

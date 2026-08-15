@@ -70,8 +70,8 @@ class UserForm
                     // Both visibility and requiredness are closures reading
                     // the current person_type via Get — same condition twice
                     // because a hidden field must not also be required.
-                    ->visible(fn (Get $get): bool => $get('person_type') === PersonType::Company->value)
-                    ->required(fn (Get $get): bool => $get('person_type') === PersonType::Company->value),
+                    ->visible(fn (Get $get): bool => self::isCompany($get('person_type')))
+                    ->required(fn (Get $get): bool => self::isCompany($get('person_type'))),
                 TextInput::make('company_national_id')
                     ->label('شناسه ملی')
                     /*
@@ -87,8 +87,8 @@ class UserForm
                         'digits' => 'شناسه ملی باید یک عدد ۱۱ رقمی باشد.',
                     ])
                     ->unique(ignoreRecord: true)
-                    ->visible(fn (Get $get): bool => $get('person_type') === PersonType::Company->value)
-                    ->required(fn (Get $get): bool => $get('person_type') === PersonType::Company->value),
+                    ->visible(fn (Get $get): bool => self::isCompany($get('person_type')))
+                    ->required(fn (Get $get): bool => self::isCompany($get('person_type'))),
                 TextInput::make('password')
                     ->label('رمز عبور')
                     // ->password() masks it; ->revealable() adds the eye icon.
@@ -117,5 +117,31 @@ class UserForm
                     ->default(true)
                     ->required(),
             ]);
+    }
+
+    /**
+     * Is the person_type currently selected in the form «حقوقی» (a company)?
+     *
+     * WHY THIS IS NOT JUST `$state === PersonType::Company->value`:
+     * `Select::make('person_type')->options(PersonType::class)` makes
+     * Filament attach an *enum state cast* to the field (see
+     * Filament\Forms\Components\Select::getEnumDefaultStateCast()), so
+     * `$get('person_type')` hands back a PersonType **object**, not the
+     * string 'company'. Comparing an object with a string is never true, so
+     * the two حقوقی fields stayed hidden no matter what was selected —
+     * that was the bug this method fixes.
+     *
+     * The string branch is kept because the same helper should stay correct
+     * if this field is ever switched to plain string options (which is what
+     * the public registration form uses — Radio with string keys — and why
+     * that form never had the bug).
+     */
+    private static function isCompany(mixed $state): bool
+    {
+        if ($state instanceof PersonType) {
+            return $state === PersonType::Company;
+        }
+
+        return $state === PersonType::Company->value;
     }
 }

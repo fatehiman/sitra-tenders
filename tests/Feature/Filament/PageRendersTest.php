@@ -62,7 +62,16 @@ class PageRendersTest extends TestCase
             // not just the page shell around it.
             ->assertSee('شماره موبایل')
             ->assertSee('کد تایید')
-            ->assertSee('اطلاعات کاربر');
+            ->assertSee('اطلاعات کاربر')
+            /*
+             * Enter must mean «بعدی» on every step but the last. Without
+             * this handler the key submits the form, which runs register()
+             * — the final step's action — so pressing Enter after typing a
+             * mobile number threw the visitor back to step 1 with an error.
+             * Pinned here because it is a single attribute that a future
+             * edit to the Wizard chain could drop without any test noticing.
+             */
+            ->assertSee('requestNextStep()', escape: false);
     }
 
     /** /login still points people at it, via Filament's own route name. */

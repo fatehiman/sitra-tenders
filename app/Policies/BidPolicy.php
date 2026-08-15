@@ -37,14 +37,30 @@ class BidPolicy
         return $this->isStaffOrAdmin($user);
     }
 
+    /**
+     * Staff/admin — UNLESS somebody has already bid on this tender.
+     *
+     * A user bids against a specific title, description, deadline and goods
+     * list; letting those change afterwards would silently rewrite the terms
+     * of a submitted offer. So the tender freezes on first bid, for admins
+     * too. The way out is the «لغو» action on the مناقصات table (admin only),
+     * which cancels the bids and unlocks the tender.
+     *
+     * Putting the rule here rather than only on the Edit button means the
+     * /bids/{id}/edit URL is blocked as well — Filament hides the button
+     * *because* of this method, not the other way round. BidsTable shows a
+     * lock icon in the button's place so the absence is explained rather
+     * than mysterious.
+     */
     public function update(User $user, Bid $bid): bool
     {
-        return $this->isStaffOrAdmin($user);
+        return $this->isStaffOrAdmin($user) && ! $bid->isLocked();
     }
 
+    /** Same lock as update() — deleting would take the bids down with it. */
     public function delete(User $user, Bid $bid): bool
     {
-        return $this->isStaffOrAdmin($user);
+        return $this->isStaffOrAdmin($user) && ! $bid->isLocked();
     }
 
     // restore/forceDelete only apply to soft-deleted records. Bids are not

@@ -12,6 +12,7 @@ use App\Models\BidSuggestion;
 use App\Models\BidSuggestionAttachment;
 use App\Models\GoodDrawing;
 use Ariaieboy\Jalali\Jalali;
+use Carbon\CarbonInterface;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
@@ -40,7 +41,7 @@ use Illuminate\Support\Facades\Storage;
  *
  * Roughly:
  *   user        — only active tenders; sees the state of *their own* bid
- *                 («ارسال پیشنهاد» time + «وضعیت پیشنهاد»), can submit one
+ *                 («ارسال پیشنهاد» time + «وضعیت»), can submit one
  *                 and re-open it read-only afterwards.
  *   staff/admin — every tender in every state, how many live bids each has,
  *                 and a lock icon instead of «ویرایش» once anyone has bid.
@@ -92,22 +93,32 @@ class BidsTable
                     ->badge()
                     ->visible(fn (): bool => ! self::isUser()),
                 /*
-                 * Stored Gregorian, shown Jalali. ->jalaliDateTime() is a
-                 * macro added to TextColumn by ariaieboy/filament-jalali; it
-                 * formats using config('filament-jalali.date_time_format'),
-                 * so the format lives in one place for the whole app.
+                 * Start and end in ONE column, stacked on two lines — the
+                 * table carries a lot of columns for the user role and two
+                 * separate date columns were what pushed it past the screen
+                 * width into a horizontal scrollbar.
                  *
-                 * Sorting is unaffected — it still ORDERs BY the real
-                 * Gregorian column, so the order stays chronologically
-                 * correct rather than sorting formatted strings.
+                 * ->state() returns an ARRAY of two strings and
+                 * ->listWithLineBreaks() renders one per line, which is the
+                 * same pair of methods the attachment lists in the modals use.
+                 *
+                 * Because the state is built by hand, the ->jalaliDateTime()
+                 * macro (which formats a single date column) cannot be used —
+                 * self::jalali() below does the identical conversion, reading
+                 * the very same config key so the format still lives in one
+                 * place.
+                 *
+                 * Sorting still ORDERs BY the real Gregorian start_at column,
+                 * so the order stays chronologically correct rather than
+                 * sorting formatted strings.
                  */
                 TextColumn::make('start_at')
-                    ->label('شروع')
-                    ->jalaliDateTime()
-                    ->sortable(),
-                TextColumn::make('expire_at')
-                    ->label('پایان')
-                    ->jalaliDateTime()
+                    ->label('شروع / پایان')
+                    ->state(fn (Bid $record): array => [
+                        self::jalali($record->start_at),
+                        self::jalali($record->expire_at),
+                    ])
+                    ->listWithLineBreaks()
                     ->sortable(),
                 /*
                  * When the logged-in user sent their bid on this tender, or
@@ -136,7 +147,12 @@ class BidsTable
                  * this file, and this column is the one place it should show.
                  */
                 TextColumn::make('my_suggestion_status')
-                    ->label('وضعیت پیشنهاد')
+                    // Just «وضعیت»: the word پیشنهاد was costing width, and
+                    // for a user every column on this row is already about
+                    // their own bid. No clash with the status_label column
+                    // above — that one is staff/admin-only, this one is
+                    // user-only, so they are never on screen together.
+                    ->label('وضعیت')
                     ->badge()
                     ->state(fn (Bid $record): string => self::ownSuggestion($record)?->getStatusLabel() ?? 'ارسال نشده')
                     ->color(fn (Bid $record): string => self::ownSuggestion($record)?->getStatusColor() ?? 'gray')
@@ -150,7 +166,10 @@ class BidsTable
                  * transcribe wrong.
                  */
                 TextColumn::make('my_suggestion_tracking_code')
-                    ->label('کد پیگیری')
+                    // Shortened from «کد پیگیری» to fit the row; the full
+                    // wording still appears in the «مشاهده پیشنهاد» modal and
+                    // in the copy confirmation below.
+                    ->label('رهگیری')
                     ->state(fn (Bid $record): ?string => self::liveSuggestion($record)?->tracking_code)
                     ->placeholder('—')
                     ->copyable()
@@ -160,7 +179,7 @@ class BidsTable
                 // not ->numeric(), to keep Latin digits like every other
                 // number in the panel.
                 TextColumn::make('my_suggestion_total')
-                    ->label('مبلغ پیشنهاد (ریال)')
+                    ->label('مبلغ (ریال)')
                     ->state(fn (Bid $record): ?string => filled(self::liveSuggestion($record)?->total_price)
                         ? number_format(self::liveSuggestion($record)->total_price)
                         : null)
@@ -216,6 +235,21 @@ class BidsTable
         return Auth::user()->hasRole(RoleName::User->value);
     }
 
+    /**
+     * One stored Gregorian date, as the Jalali string the panel shows.
+     *
+     * This is exactly what the ->jalaliDateTime() column/entry macro does —
+     * spelled out here because the merged «شروع / پایان» column builds its own
+     * state and so never passes through that macro. It reads the same
+     * config key, so changing the format still changes it everywhere.
+     */
+    private static function jalali(?CarbonInterface $date): string
+    {
+        return $date
+            ? Jalali::fromCarbon($date)->format(config('filament-jalali.date_time_format'))
+            : '—';
+    }
+
     /** Is the person looking at the table an admin? */
     private static function isAdmin(): bool
     {
@@ -247,7 +281,7 @@ class BidsTable
 
     /**
      * The row the user actually has here, live or draft — used only by the
-     * «وضعیت پیشنهاد» column, which is the one place a draft should be
+     * «وضعیت» column, which is the one place a draft should be
      * visible. Everything else deliberately uses liveSuggestion().
      */
     private static function ownSuggestion(Bid $record): ?BidSuggestion

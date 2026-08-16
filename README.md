@@ -30,7 +30,8 @@ This is the project's entry-point doc. See also:
    exist today — `admin`, `staff`, `user` — modeled so a fourth role can be
    added later without schema changes.
 3. **Project title**: سامانه مناقصات سیترا, shown as the panel/brand name.
-4. **Change password** page available to every authenticated role.
+4. **Change password** page available to every authenticated role — last
+   item in the sidebar.
 5. **مناقصات (Tenders) list** is the default/home page after login for every
    role. Admin and staff can create tenders: title, rich-text description
    (with inline image upload directly from the editor), many attachments of
@@ -47,19 +48,43 @@ This is the project's entry-point doc. See also:
    Every tender row carries an eye icon (title, description, **attachments**,
    start/end in a modal) and a clipboard icon (its goods requirements, with
    نقشه download links).
-9. **پیشنهادها (bids/offers)** — a user submits **one per tender** (the
-   contents are still a single free-text field until Form الف / Form ب are
-   specified). Around that scaffold the lifecycle is real:
+9. **پیشنهادها (bids/offers)** — a user submits **one per tender**, built in
+   a five-step wizard at `/bids/{id}/suggest`:
+   1. **قیمت کالاها** — every «کالای مورد نیاز» of the tender as a table
+      row, with a قیمت واحد box in **whole ریال**. The line total (price ×
+      requested quantity) and the جمع کل at the bottom update as you leave
+      each box. A good you leave empty is simply one you are not supplying.
+   2. **توضیحات و پیوست‌ها** — free text plus up to **10** files
+      (PDF/Office/images/video/audio).
+   3. **رسید پرداخت** — the رسید پرداخت or ضمانت‌نامه بانکی (PDF or image).
+   4. **تایید نهایی** — your mobile number and what happens next; pressing
+      «بعدی» is what texts the code.
+   5. **کد تایید** — enter it, submit, and the bid is final. You get an
+      8-digit **«کد پیگیری»**, also shown on the tender row and in
+      «مشاهده پیشنهاد».
+
+   Around that:
+   - **every step saves a draft on the server** — prices, text and files
+     all survive closing the browser. The row button reads «ادامه پیش‌نویس»
+     when you have one, and there is a «ذخیره پیش‌نویس» button on every
+     step. A draft is not a bid: staff cannot see it and it does not lock
+     the tender;
    - the tenders table shows the user their «ارسال پیشنهاد» date-time (a
-     dash until they bid) and «وضعیت پیشنهاد»: ارسال نشده → ارسال شده →
-     دردست بررسی once the tender closes → فرم الف → فرم ب → تایید شده / رد
-     شده. The last four are **not set by anything yet** — the admin review
-     screens are future work; see `App\Enums\SuggestionStatus`;
-   - a read-only «مشاهده پیشنهاد» action re-opens a submitted bid;
+     dash until they bid), «کد پیگیری», «مبلغ پیشنهاد» and «وضعیت پیشنهاد»:
+     ارسال نشده → پیش‌نویس → ارسال شده → دردست بررسی once the tender
+     closes → فرم الف → فرم ب → تایید شده / رد شده. The last four are **not
+     set by anything yet** — the admin review screens are future work; see
+     `App\Enums\SuggestionStatus`;
+   - a read-only «مشاهده پیشنهاد» action re-opens a submitted bid with its
+     priced goods, totals and files;
+   - **«انصراف از پیشنهاد»** lets the bidder delete their own bid outright
+     — files included — but only **before** the tender's deadline. Editing
+     a submitted bid is never possible;
    - **a tender with a live bid is locked** — nobody, admin included, can
      edit or delete it, so the terms cannot change under a submitted offer;
    - **«لغو» (admin only)** cancels bids on a tender: it unlocks it and
-     lets those users bid again.
+     lets those users bid again. Unlike «انصراف» it keeps the row, with who
+     cancelled it, when and why.
 
 ## Tech stack
 
@@ -68,6 +93,9 @@ This is the project's entry-point doc. See also:
   policies/roles instead of separate panels.
 - **spatie/laravel-permission** for roles (admin/staff/user, extensible).
 - **MySQL 8** for storage, local disk for file attachments.
+- **Tehran time** (`Asia/Tehran`), not UTC — every timestamp the app writes
+  or reads is Iran wall-clock. See
+  [ARCHITECTURE.md](ARCHITECTURE.md#timezone-asiatehran).
 - Persian-only UI, RTL layout, **Jalali (Shamsi) everywhere the user looks** —
   date pickers, table columns and detail views — on top of Gregorian storage,
   via `ariaieboy/filament-jalali`. Digits stay Latin (`1405/05/24`) to match

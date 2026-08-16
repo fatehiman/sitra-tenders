@@ -3,10 +3,13 @@
 namespace App\Filament\Resources\Bids\Tables;
 
 use App\Enums\RoleName;
+use App\Enums\SuggestionAttachmentType;
+use App\Filament\Resources\Bids\BidResource;
 use App\Models\Bid;
 use App\Models\BidAttachment;
 use App\Models\BidGoodRequirement;
 use App\Models\BidSuggestion;
+use App\Models\BidSuggestionAttachment;
 use App\Models\GoodDrawing;
 use Ariaieboy\Jalali\Jalali;
 use Filament\Actions\Action;
@@ -20,8 +23,6 @@ use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\RepeatableEntry\TableColumn;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
-use Filament\Schemas\Components\Wizard;
-use Filament\Schemas\Components\Wizard\Step;
 use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
@@ -64,7 +65,14 @@ class BidsTable
              */
             ->modifyQueryUsing(function (Builder $query): Builder {
                 if (Auth::user()->hasRole(RoleName::User->value)) {
-                    return $query->active()->with('mySuggestion');
+                    // The nested loads feed the «مشاهده پیشنهاد» modal, which
+                    // now shows the priced goods and the uploaded files as
+                    // well as the note — without them, opening it would fire
+                    // a query per line.
+                    return $query->active()->with([
+                        'mySuggestion.items.requirement.good',
+                        'mySuggestion.attachments',
+                    ]);
                 }
 
                 // 'activeSuggestions' (not a count) because Bid::isLocked()
@@ -117,14 +125,46 @@ class BidsTable
                     ->jalaliDateTime()
                     ->placeholder('—')
                     ->visible(fn (): bool => self::isUser()),
-                // The step that bid is at, in Persian. See
-                // BidSuggestion::getStatusLabel() for the full ladder and
-                // App\Enums\SuggestionStatus for what is still TODO.
+                /*
+                 * The step that bid is at, in Persian. See
+                 * BidSuggestion::getStatusLabel() for the full ladder and
+                 * App\Enums\SuggestionStatus for what is still TODO.
+                 *
+                 * A saved-but-unfinished wizard shows «پیش‌نویس» here. Note
+                 * that comes from draftSuggestion(), NOT liveSuggestion() —
+                 * a draft is deliberately invisible to every other rule in
+                 * this file, and this column is the one place it should show.
+                 */
                 TextColumn::make('my_suggestion_status')
                     ->label('وضعیت پیشنهاد')
                     ->badge()
-                    ->state(fn (Bid $record): string => self::liveSuggestion($record)?->getStatusLabel() ?? 'ارسال نشده')
-                    ->color(fn (Bid $record): string => self::liveSuggestion($record)?->getStatusColor() ?? 'gray')
+                    ->state(fn (Bid $record): string => self::ownSuggestion($record)?->getStatusLabel() ?? 'ارسال نشده')
+                    ->color(fn (Bid $record): string => self::ownSuggestion($record)?->getStatusColor() ?? 'gray')
+                    ->visible(fn (): bool => self::isUser()),
+                /*
+                 * The «کد پیگیری» issued at finalisation. It is the one thing
+                 * the user is told to keep, so it belongs on the row and not
+                 * only in the success toast that produced it.
+                 *
+                 * ->copyable() because eight digits is exactly long enough to
+                 * transcribe wrong.
+                 */
+                TextColumn::make('my_suggestion_tracking_code')
+                    ->label('کد پیگیری')
+                    ->state(fn (Bid $record): ?string => self::liveSuggestion($record)?->tracking_code)
+                    ->placeholder('—')
+                    ->copyable()
+                    ->copyMessage('کد پیگیری کپی شد.')
+                    ->visible(fn (): bool => self::isUser()),
+                // The bid price — the sum of every priced line. number_format,
+                // not ->numeric(), to keep Latin digits like every other
+                // number in the panel.
+                TextColumn::make('my_suggestion_total')
+                    ->label('مبلغ پیشنهاد (ریال)')
+                    ->state(fn (Bid $record): ?string => filled(self::liveSuggestion($record)?->total_price)
+                        ? number_format(self::liveSuggestion($record)->total_price)
+                        : null)
+                    ->placeholder('—')
                     ->visible(fn (): bool => self::isUser()),
                 // How many live bids this tender carries — i.e. also why it
                 // is locked, for staff looking at a missing edit button.
@@ -153,6 +193,7 @@ class BidsTable
                     ->visible(fn (): bool => ! self::isUser()),
                 self::lockedAction(),
                 self::cancelSuggestionsAction(),
+                self::withdrawSuggestionAction(),
                 self::suggestAction(),
             ])
             // Buttons above the table, acting on checkbox-selected rows.
@@ -186,13 +227,32 @@ class BidsTable
      *
      * A cancelled bid returns null everywhere on purpose: to the user, an
      * admin-cancelled bid means "you have not bid on this tender", and the
-     * «ارسال پیشنهاد» button comes back.
+     * «ارسال پیشنهاد» button comes back. An unfinished DRAFT returns null for
+     * the same reason — it is not a bid yet (see SuggestionStatus::isActive()).
      */
     private static function liveSuggestion(Bid $record): ?BidSuggestion
     {
         $suggestion = $record->mySuggestion;
 
         return $suggestion?->status->isActive() ? $suggestion : null;
+    }
+
+    /** The current user's unfinished wizard for this tender, if any. */
+    private static function draftSuggestion(Bid $record): ?BidSuggestion
+    {
+        $suggestion = $record->mySuggestion;
+
+        return $suggestion?->isDraft() ? $suggestion : null;
+    }
+
+    /**
+     * The row the user actually has here, live or draft — used only by the
+     * «وضعیت پیشنهاد» column, which is the one place a draft should be
+     * visible. Everything else deliberately uses liveSuggestion().
+     */
+    private static function ownSuggestion(Bid $record): ?BidSuggestion
+    {
+        return self::liveSuggestion($record) ?? self::draftSuggestion($record);
     }
 
     /*
@@ -332,7 +392,15 @@ class BidsTable
             ->color('info')
             ->visible(fn (Bid $record): bool => self::isUser() && self::liveSuggestion($record) !== null)
             ->modalHeading(fn (Bid $record): string => "پیشنهاد شما — {$record->title}")
+            ->modalWidth(Width::FiveExtraLarge)
             ->schema([
+                TextEntry::make('my_tracking_code')
+                    ->label('کد پیگیری')
+                    ->badge()
+                    ->color('success')
+                    ->placeholder('—')
+                    ->copyable()
+                    ->state(fn (Bid $record): ?string => self::liveSuggestion($record)?->tracking_code),
                 TextEntry::make('my_submitted_at')
                     ->label('تاریخ و ساعت ارسال')
                     ->state(fn (Bid $record) => self::liveSuggestion($record)?->submitted_at)
@@ -342,13 +410,81 @@ class BidsTable
                     ->badge()
                     ->state(fn (Bid $record): string => self::liveSuggestion($record)?->getStatusLabel() ?? '—')
                     ->color(fn (Bid $record): string => self::liveSuggestion($record)?->getStatusColor() ?? 'gray'),
+                /*
+                 * The priced lines. The state is the BidSuggestionItem models
+                 * themselves, so each row can reach through to the tender's
+                 * requirement and from there to the good — which is where the
+                 * code, name and requested quantity live. Nothing about the
+                 * good is copied onto the item row (see that migration).
+                 */
+                RepeatableEntry::make('my_items')
+                    ->label('کالاهای پیشنهادشده')
+                    ->state(fn (Bid $record): array => self::liveSuggestion($record)?->items->all() ?? [])
+                    ->placeholder('برای هیچ کالایی قیمت ثبت نشده است.')
+                    ->columnSpanFull()
+                    ->table([
+                        TableColumn::make('کد کالا'),
+                        TableColumn::make('شرح کالا'),
+                        TableColumn::make('تعداد'),
+                        TableColumn::make('قیمت واحد (ریال)'),
+                        TableColumn::make('جمع (ریال)'),
+                    ])
+                    ->schema([
+                        TextEntry::make('requirement.good.code')->hiddenLabel(),
+                        TextEntry::make('requirement.good.name')->hiddenLabel(),
+                        TextEntry::make('requirement.quantity')
+                            ->hiddenLabel()
+                            ->formatStateUsing(fn (?int $state): string => number_format((int) $state)),
+                        TextEntry::make('unit_price')
+                            ->hiddenLabel()
+                            ->formatStateUsing(fn (?int $state): string => number_format((int) $state)),
+                        TextEntry::make('total_price')
+                            ->hiddenLabel()
+                            ->formatStateUsing(fn (?int $state): string => number_format((int) $state)),
+                    ]),
+                TextEntry::make('my_total')
+                    ->label('جمع کل پیشنهاد (ریال)')
+                    ->weight('bold')
+                    ->state(fn (Bid $record): string => number_format(
+                        (int) self::liveSuggestion($record)?->total_price
+                    )),
                 TextEntry::make('my_note')
                     ->label('متن پیشنهاد')
+                    ->placeholder('—')
                     ->state(fn (Bid $record): ?string => self::liveSuggestion($record)?->note)
                     ->columnSpanFull(),
+                // Same "state is the model, not a string" trick the tender's
+                // own attachment list uses, so each filename carries its own
+                // download URL.
+                self::suggestionFilesEntry('my_documents', 'پیوست‌ها', SuggestionAttachmentType::Document),
+                self::suggestionFilesEntry('my_receipts', 'رسید پرداخت / ضمانت‌نامه بانکی', SuggestionAttachmentType::PaymentReceipt),
             ])
             ->modalSubmitAction(false)
             ->modalCancelActionLabel('بستن');
+    }
+
+    /**
+     * One downloadable file list from the user's own bid.
+     *
+     * Factored out because the modal shows two of them (documents and
+     * receipts) that differ only in which `type` they filter on.
+     */
+    private static function suggestionFilesEntry(string $name, string $label, SuggestionAttachmentType $type): TextEntry
+    {
+        return TextEntry::make($name)
+            ->label($label)
+            ->placeholder('فایلی بارگذاری نشده است.')
+            ->state(fn (Bid $record): array => self::liveSuggestion($record)
+                ?->attachments
+                ->where('type', $type)
+                ->values()
+                ->all() ?? [])
+            ->formatStateUsing(fn (BidSuggestionAttachment $state): string => $state->original_name)
+            ->url(fn (BidSuggestionAttachment $state): string => $state->url)
+            ->openUrlInNewTab()
+            ->icon(Heroicon::OutlinedPaperClip)
+            ->listWithLineBreaks()
+            ->columnSpanFull();
     }
 
     /**
@@ -376,21 +512,30 @@ class BidsTable
                     ->placeholder('هنوز پیشنهادی برای این مناقصه ارسال نشده است.')
                     ->table([
                         TableColumn::make('پیشنهاددهنده'),
+                        TableColumn::make('کد پیگیری'),
                         TableColumn::make('تاریخ و ساعت ارسال'),
                         TableColumn::make('وضعیت'),
+                        TableColumn::make('مبلغ کل (ریال)'),
                         TableColumn::make('متن پیشنهاد'),
                     ])
                     ->schema([
                         // display_name is the company name for a حقوقی
                         // account and the person's full name otherwise.
                         TextEntry::make('user.display_name')->hiddenLabel(),
+                        TextEntry::make('tracking_code')->hiddenLabel()->placeholder('—'),
                         TextEntry::make('submitted_at')->hiddenLabel()->jalaliDateTime(),
                         TextEntry::make('status')
                             ->hiddenLabel()
                             ->badge()
                             ->state(fn (BidSuggestion $record): string => $record->getStatusLabel())
                             ->color(fn (BidSuggestion $record): string => $record->getStatusColor()),
-                        TextEntry::make('note')->hiddenLabel(),
+                        // number_format, not ->numeric(): Latin digits, like
+                        // every other number in the panel.
+                        TextEntry::make('total_price')
+                            ->hiddenLabel()
+                            ->placeholder('—')
+                            ->formatStateUsing(fn (?int $state): string => number_format((int) $state)),
+                        TextEntry::make('note')->hiddenLabel()->placeholder('—'),
                     ]),
             ])
             ->modalSubmitAction(false)
@@ -500,53 +645,92 @@ class BidsTable
      */
 
     /**
-     * User role — send a bid on this tender.
+     * User role — open the bid wizard for this tender.
      *
-     * The content is still a scaffold (one free-text field) per the explicit
-     * requirement; the lifecycle around it is not — see
-     * App\Enums\SuggestionStatus.
+     * A link, not a modal: the bid is a five-step wizard with a price table,
+     * ten uploads and an SMS confirmation, and it saves itself as a draft on
+     * the server between steps — none of which fits in a dialog. See
+     * App\Filament\Resources\Bids\Pages\SubmitSuggestion for the flow.
      *
-     * The button hides once the user has a live bid here, and comes back if
-     * an admin cancels it. Either way the unique (bid_id, user_id) index in
-     * the database is the real guarantee, regardless of this check — which
-     * is also why re-bidding reuses the existing row via resubmit().
+     * The label changes to «ادامه پیش‌نویس» when there is already a saved,
+     * unfinished draft, because "ارسال پیشنهاد" would suggest starting over
+     * and losing it — which is exactly the fear that stops people using a
+     * draft feature at all.
+     *
+     * The button hides once the user has a LIVE bid here, and comes back if
+     * an admin cancels it or the user withdraws it. The unique
+     * (bid_id, user_id) index is the real guarantee regardless of this
+     * check — which is also why the wizard reuses the existing row rather
+     * than inserting a second one (BidSuggestion::startDraft()).
      */
     private static function suggestAction(): Action
     {
         return Action::make('suggest')
-            ->label('ارسال پیشنهاد')
+            ->label(fn (Bid $record): string => self::draftSuggestion($record)
+                ? 'ادامه پیش‌نویس'
+                : 'ارسال پیشنهاد')
+            ->icon(fn (Bid $record): Heroicon => self::draftSuggestion($record)
+                ? Heroicon::OutlinedPencilSquare
+                : Heroicon::OutlinedPaperAirplane)
+            ->color(fn (Bid $record): string => self::draftSuggestion($record) ? 'warning' : 'primary')
             ->visible(fn (Bid $record): bool => self::isUser() && self::liveSuggestion($record) === null)
-            ->schema([
-                Wizard::make([
-                    Step::make('پیشنهاد')
-                        ->schema([
-                            Textarea::make('note')
-                                ->label('متن پیشنهاد')
-                                ->required()
-                                ->rows(5),
-                        ]),
-                ]),
-            ])
-            // ->action() is what runs when the modal is submitted. $data
-            // holds the validated field values from the wizard above.
-            ->action(function (array $data, Bid $record): void {
-                $existing = $record->mySuggestion;
+            // A plain navigation, so there is no ->action() to run: the page
+            // on the other end does the whole job.
+            ->url(fn (Bid $record): string => BidResource::getUrl('suggest', ['record' => $record]));
+    }
 
-                if ($existing) {
-                    // Only reachable when the previous bid was cancelled —
-                    // a live one hides this button.
-                    $existing->resubmit($data['note']);
-                } else {
-                    $record->suggestions()->create([
-                        // Taken from the session, never from the form.
-                        'user_id' => Auth::id(),
-                        'note' => $data['note'],
-                        'submitted_at' => now(),
-                    ]);
+    /**
+     * User role — take your own submitted bid back, permanently.
+     *
+     * This is NOT the admin's «لغو». That one marks the row «لغو شده» and
+     * keeps who/when/why, because it is a correction made to somebody else's
+     * bid and there has to be a record of it. This one is the bidder
+     * withdrawing their own offer, and the requirement is explicit that it
+     * removes the bid entirely — row, priced lines and uploaded files
+     * (BidSuggestion::purge()).
+     *
+     * Only while the tender is still open: after the deadline the offers are
+     * being compared against each other, and pulling one out at that point
+     * would be a different product. Editing stays forbidden either way — the
+     * way to change a bid is to withdraw it and send a new one, which keeps
+     * the «ارسال پیشنهاد» timestamp honest.
+     */
+    private static function withdrawSuggestionAction(): Action
+    {
+        return Action::make('withdrawSuggestion')
+            ->label('انصراف از پیشنهاد')
+            ->icon(Heroicon::OutlinedTrash)
+            ->iconButton()
+            ->color('danger')
+            ->visible(fn (Bid $record): bool => self::isUser()
+                && (bool) self::liveSuggestion($record)?->isWithdrawable())
+            ->requiresConfirmation()
+            ->modalHeading('انصراف از پیشنهاد')
+            ->modalDescription('پیشنهاد شما به‌طور کامل و برای همیشه حذف می‌شود؛ قیمت‌ها، پیوست‌ها و رسید پرداخت نیز پاک خواهند شد. پس از حذف می‌توانید تا پایان مهلت مناقصه پیشنهاد تازه‌ای ارسال کنید.')
+            ->modalSubmitActionLabel('بله، حذف کن')
+            ->action(function (Bid $record): void {
+                $suggestion = self::liveSuggestion($record);
+
+                /*
+                 * Re-checked here, not just in ->visible(). The row was
+                 * rendered at some point in the past; the deadline can have
+                 * passed since, or an admin can have cancelled the bid in the
+                 * meantime, and the button would still be sitting on screen.
+                 */
+                if (! $suggestion?->isWithdrawable()) {
+                    Notification::make()
+                        ->title('امکان انصراف وجود ندارد.')
+                        ->body('مهلت این مناقصه به پایان رسیده است یا پیشنهاد شما دیگر فعال نیست.')
+                        ->danger()
+                        ->send();
+
+                    return;
                 }
 
+                $suggestion->purge();
+
                 Notification::make()
-                    ->title('پیشنهاد شما با موفقیت ثبت شد.')
+                    ->title('پیشنهاد شما حذف شد.')
                     ->success()
                     ->send();
             });

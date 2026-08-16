@@ -12,6 +12,20 @@ use Filament\Pages\Dashboard as BaseDashboard;
  */
 class Dashboard extends BaseDashboard
 {
+    /**
+     * Keep the page (it owns '/'), but keep it OUT of the sidebar.
+     *
+     * A «داشبورد» menu item whose only behaviour is to bounce you to
+     * مناقصات — which is the item directly below it — is a rung on the
+     * ladder that goes nowhere. The route still has to exist, because
+     * Filament sends people to the panel root after logging in and that
+     * root is this page.
+     */
+    public static function shouldRegisterNavigation(): bool
+    {
+        return false;
+    }
+
     public function mount(): void
     {
         redirect()->to(BidResource::getUrl());

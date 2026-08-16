@@ -34,10 +34,37 @@ separate public site to protect a `/admin` prefix from.
   panel's auth middleware for us. **This used to be a standalone Livewire
   route with hand-written Tailwind; it is not any more** — see
   [Registration + OTP flow](#registration--otp-flow).
-- Panel home (`/`) resolves to the **مناقصات (Bid) list**, not Filament's
-  default Dashboard, for every role — the Dashboard page is not registered.
-- `/profile` (or similar) — the **change password** page, available to all
-  three roles via the panel's user menu.
+- Panel home (`/`) resolves to the **مناقصات (Bid) list** for every role.
+  `App\Filament\Pages\Dashboard` exists only to own that root route and
+  redirect; it returns `false` from `shouldRegisterNavigation()`, so there
+  is **no «داشبورد» item in the sidebar**. A menu entry whose only behaviour
+  is to bounce you to the item directly below it is a rung that goes
+  nowhere — but the route itself still has to exist, because that is where
+  Filament sends people after logging in.
+- `/bids/{record}/suggest` — the user's **«ارسال پیشنهاد» wizard**. A
+  resource page rather than a `routes/web.php` route, so it inherits the
+  panel's auth middleware, layout and breadcrumbs; see
+  [پیشنهاد lifecycle](#پیشنهاد-bidoffer-lifecycle).
+- **تغییر رمز عبور** — the change-password page, available to all three
+  roles. `$navigationSort = 99` pins it to the BOTTOM of the sidebar: the
+  three resources use 1/2/3, and a page that leaves the sort null is treated
+  as 0 and jumps above all of them.
+
+### After registration, always the tenders list
+
+Filament's `RegistrationResponse` redirects with `redirect()->intended(...)`,
+and "intended" is whatever URL the auth middleware stashed in the session
+the last time somebody hit a protected page while logged out. That session
+key outlives the visit, so a visitor who had earlier opened, say,
+`/goods/1/edit` was sent straight there after signing up — a page their
+brand-new `user` role cannot even open, and a redirect that looked random
+and unreproducible.
+
+`Register::register()` therefore calls `session()->forget('url.intended')`
+before delegating to the parent. Restoring an intended URL is right for
+**login** (you were going somewhere, we interrupted you, we put you back)
+and never right for **registration**: the person had no account when that
+URL was recorded, so it cannot have been meant for them.
 
 `routes/web.php` is therefore effectively empty: the panel registers every
 route the app has. Link to registration with
@@ -232,6 +259,15 @@ support/debugging (see [DATABASE.md](DATABASE.md#sent_sms_log)).
 OTP send is rate-limited per-mobile and per-IP (Laravel's rate limiter) to
 control cost, since msgway bills per accepted send regardless of delivery.
 
+**Two flows use `OtpService`**: registration, and finalising a پیشنهاد. They
+share one table and one keying scheme (by mobile) deliberately — the two can
+never be in flight for the same number at once, because you cannot be
+registering and logged in simultaneously. The only thing that differs is
+`sent_sms_log.purpose` (`otp_registration` / `otp_bid_suggestion`), which
+exists so support can tell the two kinds of send apart on the bill. The bid
+wizard also checks completeness **before** issuing a code, so no message is
+ever spent on a bid that could not have been accepted.
+
 ### Current msgway status
 
 A real `MSGWAY_API_KEY` is now configured and the driver is verified working
@@ -263,6 +299,26 @@ Local-dev note: PHP 8.4 on the shipping VPS resolves TLS fine, but a Windows
 PHP with no `curl.cainfo` / `openssl.cafile` in `php.ini` fails every msgway
 call with `cURL error 60: self-signed certificate in certificate chain`. That
 is a dev-machine config gap, not an app bug — point PHP at a `cacert.pem`.
+
+## Timezone: Asia/Tehran
+
+`config('app.timezone')` is **`Asia/Tehran`**, not Laravel's default `UTC`.
+Everything the app measures — tender start/end times, the OTP's two-minute
+window, the «ارسال پیشنهاد» timestamp — is meaningful only in Iran, and
+there is no second audience in another timezone to keep happy.
+
+What it changes: `now()` and Carbon return Tehran wall-clock time, and that
+is the value written to the `datetime` columns. The columns are unchanged —
+MySQL `datetime` carries no timezone either way — so this is a change in
+what the stored numbers *mean*, not in the schema. Jalali display sits on
+top of that and is unaffected.
+
+**Rows written before the switch (2026-08-16) were stamped in UTC and were
+deliberately left alone**, so they now read 3:30 later than they used to.
+The data at the time was test data, and rewriting historical timestamps is
+riskier than the small display shift. If real tenders had already been
+published, the right move would have been a migration shifting the affected
+columns by −3:30 instead.
 
 ## Calendar & localization
 
@@ -363,24 +419,102 @@ is a dev-machine config gap, not an app bug — point PHP at a `cacert.pem`.
 
 ## پیشنهاد (bid/offer) lifecycle
 
-The *contents* of a پیشنهاد are still a scaffold — one free-text note —
-because Form الف and Form ب are specified later. Everything around it is
-built:
+A پیشنهاد is a **priced offer**, built up over a five-step wizard at
+`/bids/{record}/suggest`
+(`App\Filament\Resources\Bids\Pages\SubmitSuggestion`):
 
-- `App\Enums\SuggestionStatus` holds the ladder: `submitted` → `form_a` →
+| Step | Contents |
+|---|---|
+| 1 «قیمت کالاها» | every «کالای مورد نیاز» of the tender as a table row, with a ریال box for the unit price. The line total (price × requested quantity) and the grand total recompute on blur. An empty box means "I am not supplying this good" |
+| 2 «توضیحات و پیوست‌ها» | the free-text «متن پیشنهاد», plus up to **10** supporting files (same allow-list as a tender's own attachments) |
+| 3 «رسید پرداخت» | the رسید پرداخت / ضمانت‌نامه بانکی — PDF or image |
+| 4 «تایید نهایی» | no fields: it shows the account's mobile number and what is about to happen. Pressing «بعدی» is what SENDS the SMS |
+| 5 «کد تایید» | the 6-digit code; submitting finalises the bid and issues the 8-digit «کد پیگیری» |
+
+**Prices are whole ریال, no decimal part** — an explicit product decision,
+so there is nothing to round. Money columns are `unsignedBigInteger`; a
+signed int overflows at ~2.1 billion ریال, which is *not* beyond a real
+tender.
+
+### Why a page, and why drafts are server-side
+
+It used to be a one-field modal on the مناقصات table. A dialog cannot hold a
+price table plus eleven uploads, and — more to the point — closing one
+throws its state away, so a draft is impossible. A page has a URL, so a
+half-finished bid is somewhere the user can come back to.
+
+**Every step transition, and the «ذخیره پیش‌نویس» header button, writes the
+whole form to the database**: the `bid_suggestions` row (status
+«پیش‌نویس»), its `bid_suggestion_items` price lines, and its
+`bid_suggestion_attachments` file rows. Re-opening the page re-fills the
+wizard from those rows. Nothing depends on the browser keeping anything.
+
+A draft is deliberately **not a bid**: `SuggestionStatus::isActive()`
+excludes it, so staff never see half-typed prices and a draft does not lock
+its tender. Were it otherwise, any user could freeze any tender indefinitely
+just by opening the wizard and walking away.
+
+### What is actually trusted
+
+Livewire state round-trips through the browser, so on every save:
+
+- **quantities are re-read from `bid_good_requirements`**, never taken from
+  the repeater row — otherwise a crafted request could quote 1 ریال a unit
+  and still report any total it liked;
+- a priced row whose `requirement_id` is not one of *this* tender's is
+  dropped silently (the only way to produce one is to craft it);
+- the SMS code is checked against the hashed challenge in
+  `otp_verifications`, not against anything the page remembers;
+- "may this person bid here at all" — right role, tender still open, no
+  existing live bid — is re-answered from the database before every write,
+  not just when the page was opened.
+
+### Two Filament traps this page hit, both silent
+
+Both are easy to reintroduce, so they are pinned by tests:
+
+- **`Schema::getState()` validates the ENTIRE form, not the current step.**
+  Saving a draft goes through it, so a `->required()` anywhere in the wizard
+  breaks every draft save and every step transition. The first version had
+  `->required()` on the OTP field, which made «ذخیره پیش‌نویس» fail on step
+  1 with "enter the code" — before a code had even been sent. **Nothing in
+  that wizard carries validation rules that a half-filled form would fail.**
+  What is genuinely mandatory (at least one price, at least one receipt) is
+  checked in `assertReadyToFinalize()` instead — as a *notification*, not a
+  field error, because both offending fields live on earlier steps that the
+  person reading the message is not looking at.
+- **Filament re-keys repeater items on hydration.** The array keys the page
+  fills in are not the ones that come back, so an item's key says nothing
+  about which good it belongs to. Reading it instead of the row's own
+  `requirement_id` field attached prices to the wrong goods — quietly, with
+  a plausible-looking total.
+
+### Status ladder
+
+- `App\Enums\SuggestionStatus` holds it: `draft` → `submitted` → `form_a` →
   `form_b` → `approved`, with `rejected` reachable from any step and
   `cancelled` sitting outside it. **`form_a`/`form_b`/`approved`/`rejected`
   are TODO cases — nothing sets them yet**, by design: the admin review
   screens are future work, and the enum documents the target shape so the
   status column does not have to be redesigned when they arrive.
+- `SuggestionStatus::inactiveValues()` derives the query-scope filter from
+  `isActive()` rather than hand-listing it, so a future case cannot be
+  classified in one place and forgotten in the other.
 - Two labels are **derived, never stored**, for the same reason `bids` has
   no `status` column — a stored value would go stale with the clock:
   «ارسال نشده» is the absence of a live row, and «دردست بررسی» is a
   `submitted` row whose tender has expired (`BidSuggestion::getStatusLabel()`).
-- The مناقصات table shows a user their own bid's «ارسال پیشنهاد» time and
-  «وضعیت پیشنهاد», via `Bid::mySuggestion()` — a `hasOne` narrowed to
-  `Auth::id()` so the whole page costs one extra query rather than one per
-  row. Staff/admin instead see a live-bid count and the bidders themselves.
+- The مناقصات table shows a user their own bid's «ارسال پیشنهاد» time,
+  «وضعیت پیشنهاد», «کد پیگیری» and «مبلغ پیشنهاد», via `Bid::mySuggestion()`
+  — a `hasOne` narrowed to `Auth::id()` so the whole page costs a fixed
+  number of queries rather than one per row. Staff/admin instead see a
+  live-bid count and the bidders themselves.
+- The status column is the **one** place a draft is visible, via
+  `BidsTable::ownSuggestion()`. Everything else in that file goes through
+  `liveSuggestion()`, which returns null for a draft. The row button reads
+  «ادامه پیش‌نویس» rather than «ارسال پیشنهاد» when one exists, because the
+  latter suggests starting over and losing it — which is the exact fear that
+  stops people trusting a draft feature.
 - **A tender with any non-cancelled bid is locked**: `BidPolicy::update()`
   and `delete()` both return false (`Bid::isLocked()`), for admins too, so
   the terms a user bid against cannot change underneath them. The rule lives
@@ -395,6 +529,30 @@ built:
   consequence of the unique index and what it costs.
 - A cancelled bid is invisible to its owner as a bid: the table shows
   «ارسال نشده» again and the «ارسال پیشنهاد» button returns.
+
+### «انصراف» — the bidder withdrawing, which is a different thing
+
+The owner of a bid gets their own button, and it is **not** the admin's
+«لغو»:
+
+| | «لغو» (admin) | «انصراف» (owner) |
+|---|---|---|
+| Effect | marks the row `cancelled`, keeps who/when/why | **deletes** the row, its price lines and its files, permanently |
+| When | any time | only while `expire_at` is in the future |
+| Why the difference | it is a correction made to somebody else's bid, so there has to be a record of it | it is the bidder taking back their own offer; the requirement is explicit that it removes the bid entirely |
+
+Editing a submitted bid stays forbidden either way — the way to change one
+is to withdraw it and send a new one, which keeps the «ارسال پیشنهاد»
+timestamp honest. The deadline limit exists because after it, the offers are
+being compared against each other; letting a bidder pull out at that point
+would be a different product.
+
+`BidSuggestion::purge()` deletes the files from disk **explicitly** before
+deleting the row. The DB cascade would take the rows but not the files, and
+it fires no model events, so there is nowhere else this could live. The
+row-action re-checks `isWithdrawable()` inside `->action()` and not only in
+`->visible()`: the row was rendered at some point in the past, and the
+deadline can have passed since.
 
 ## کالاها (Goods) module
 

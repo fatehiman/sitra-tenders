@@ -124,6 +124,20 @@ class Bid extends Model
     }
 
     /**
+     * Is this tender open for bidding right now?
+     *
+     * The same two conditions as scopeActive(), asked of one loaded model
+     * instead of the query — used by the bid wizard, which has to re-check
+     * on the server that the tender it is about to write to is still open
+     * (the visible row proves nothing; the page could have been sitting
+     * open past the deadline).
+     */
+    public function isOpen(): bool
+    {
+        return $this->start_at->isPast() && $this->expire_at->isFuture();
+    }
+
+    /**
      * Is this tender frozen because somebody has already bid on it?
      *
      * Once a user submits a bid, the terms they bid against must not change

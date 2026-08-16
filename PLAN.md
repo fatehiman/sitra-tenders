@@ -274,6 +274,48 @@ updated as work lands — it's the source of truth for "what's left."
 - [x] Six new tests (bid lifecycle + lock + the person-type regression);
       43 passing
 
+## Phase 11 — the priced bid wizard, Tehran time, panel tidy-up (2026-08-16)
+
+- [x] **Registration always lands on مناقصات.** Filament's
+      `RegistrationResponse` uses `redirect()->intended()`, and that session
+      key survives across visits — a visitor who had earlier hit
+      `/goods/1/edit` while logged out was sent there after signing up, to a
+      page their new role cannot open. `Register::register()` now clears
+      `url.intended` first. See
+      [ARCHITECTURE.md](ARCHITECTURE.md#after-registration-always-the-tenders-list)
+- [x] **No «داشبورد» sidebar item.** The page still owns `/` and still
+      redirects to مناقصات (that is where Filament sends people after
+      login); it just returns `false` from `shouldRegisterNavigation()`
+- [x] **«تغییر رمز عبور» moved to the bottom** of the sidebar —
+      `$navigationSort = 99`. A page with a null sort is treated as 0 and
+      sat above all three resources
+- [x] **App timezone is `Asia/Tehran`**, not UTC. Pre-existing rows were
+      deliberately left as-is; see
+      [ARCHITECTURE.md](ARCHITECTURE.md#timezone-asiatehran)
+- [x] **«انصراف از پیشنهاد»** — the bidder may delete their own submitted
+      bid, permanently and with its files, but only before the tender's
+      deadline. Deliberately different from the admin's «لغو», which keeps
+      the row and its reason
+- [x] **پیشنهاد rebuilt as a five-step wizard** at `/bids/{record}/suggest`:
+      per-good ریال pricing with live line and grand totals → text + up to
+      10 attachments → رسید پرداخت/ضمانت‌نامه → mobile confirmation → SMS
+      code, ending in an 8-digit «کد پیگیری». Every step saves a real
+      server-side draft (`bid_suggestion_items`,
+      `bid_suggestion_attachments`, status «پیش‌نویس»), and a draft neither
+      locks its tender nor is visible to staff
+- [x] Quantities and line totals are recomputed from
+      `bid_good_requirements` on every save, and rows citing another
+      tender's requirement are dropped — both pinned by tests
+- [x] Two Filament traps found and documented: `Schema::getState()`
+      validates the whole form (so nothing in a draftable wizard may be
+      `->required()`), and Filament re-keys repeater items (so an item's
+      array key cannot identify its row). Both had produced real bugs —
+      draft saves failing on step 1, and prices landing on the wrong good.
+      See [ARCHITECTURE.md](ARCHITECTURE.md#two-filament-traps-this-page-hit-both-silent)
+- [x] Twelve new tests (wizard happy path, draft restore, tamper guards,
+      SMS gating, role/deadline refusals, withdrawal, tracking codes) plus a
+      real-HTTP render check for the new page; 55 passing
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not
@@ -299,7 +341,9 @@ updated as work lands — it's the source of truth for "what's left."
   (`App\Enums\SuggestionStatus`): opening Form الف for a bid should move it
   to `form_a`, opening Form ب to `form_b`, and accepting/rejecting to
   `approved`/`rejected`. `BidsTable::viewSuggestionsAction()` is where those
-  screens attach. Also still open: what a پیشنهاد actually contains beyond
-  the free-text note (per-good pricing?), and notifications to staff/admin
+  screens attach. **What a پیشنهاد contains is no longer open** — per-good
+  ریال pricing, attachments and a payment receipt, all built in Phase 11.
+  Still open: notifications to staff/admin when a bid arrives, and whether
+  admins should be able to look a bid up by its «کد پیگیری»
 - Whether Redis should be adopted for queue/cache if tender volume or
   attachment processing grows enough to matter

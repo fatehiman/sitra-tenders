@@ -129,6 +129,61 @@ class PageRendersTest extends TestCase
             ->assertSee('--sidebar-width: 15.625rem', escape: false);
     }
 
+    /**
+     * The «ارسال پیشنهاد» wizard, over real HTTP.
+     *
+     * This one earns its keep more than most: the page is a hand-registered
+     * resource route with its own Blade view and a five-step wizard built
+     * from a table repeater, an SMS step and two file uploads. Any of those
+     * being wired up wrongly is a 500 the Livewire::test() suite would not
+     * see, because that helper skips the route and the layout entirely.
+     */
+    public function test_bid_suggestion_wizard_page_renders_for_a_user(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $admin = $this->makeUser(RoleName::Admin);
+
+        // A second account, because the admin above may not bid.
+        $bidder = User::create([
+            'first_name' => 'پیشنهاد',
+            'last_name' => 'دهنده',
+            'mobile' => '09121110001',
+            'national_id' => '0084575948',
+            'person_type' => PersonType::Individual,
+            'password' => Hash::make('Secret123'),
+            'mobile_verified_at' => now(),
+            'is_active' => true,
+        ]);
+        $bidder->assignRole(RoleName::User->value);
+
+        $bid = Bid::create([
+            'title' => 'مناقصه تست',
+            'description' => '<p>شرح</p>',
+            'start_at' => now()->subDay(),
+            'expire_at' => now()->addDay(),
+            'created_by' => $admin->id,
+        ]);
+
+        $good = Good::create(['code' => 'G-9', 'name' => 'پیچ آلن', 'specifications' => 'M8']);
+        $bid->goodRequirements()->create(['good_id' => $good->id, 'quantity' => 4]);
+
+        $this->actingAs($bidder)
+            ->get(BidResource::getUrl('suggest', ['record' => $bid]))
+            ->assertSuccessful()
+            // The five step headings prove the Wizard itself rendered.
+            ->assertSee('قیمت کالاها')
+            ->assertSee('توضیحات و پیوست‌ها')
+            ->assertSee('رسید پرداخت')
+            ->assertSee('تایید نهایی')
+            ->assertSee('کد تایید')
+            // The tender's goods reached the price table.
+            ->assertSee('پیچ آلن')
+            // Same Enter-key guard as the registration wizard — without it,
+            // pressing Enter while typing a price would try to finalise the
+            // bid, because the form's submit handler is the LAST step's.
+            ->assertSee('requestNextStep()', escape: false);
+    }
+
     /** The three list pages, each of which now renders a Jalali column. */
     public function test_list_pages_render_for_an_admin(): void
     {

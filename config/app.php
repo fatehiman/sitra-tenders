@@ -63,9 +63,25 @@ return [
     | will be used by the PHP date and date-time functions. The timezone
     | is set to "UTC" by default as it is suitable for most use cases.
     |
+    | This app runs on Tehran time (Laravel's default is UTC). Everything
+    | in it — tender start/end times, the OTP's two-minute window, the
+    | «ارسال پیشنهاد» timestamp — is meaningful only in Iran, and there is
+    | no second audience in another timezone to keep happy.
+    |
+    | What this actually changes: now() and Carbon return Tehran wall-clock
+    | time, and that is the value written to the datetime columns. The
+    | columns themselves are unchanged — MySQL `datetime` stores no
+    | timezone either way. Jalali display is a separate layer on top and is
+    | not affected (see ARCHITECTURE.md, "Calendar & localization").
+    |
+    | Rows written BEFORE this change were stamped in UTC and are left
+    | alone, so they now read 3:30 later than they did. That was a
+    | deliberate call — the data at the time was test data, and rewriting
+    | historical timestamps is riskier than the small display shift.
+    |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => 'Asia/Tehran',
 
     /*
     |--------------------------------------------------------------------------

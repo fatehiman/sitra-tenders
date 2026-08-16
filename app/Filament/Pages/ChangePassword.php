@@ -30,6 +30,17 @@ class ChangePassword extends Page
     protected static ?string $title = 'تغییر رمز عبور';
 
     /**
+     * Pin this to the BOTTOM of the sidebar.
+     *
+     * Filament sorts navigation items by this number ascending, and the
+     * three resources use 1 (مناقصات), 2 (کالاها) and 3 (کاربران). A page
+     * that leaves the sort null is treated as 0 and jumps to the top, which
+     * is how «تغییر رمز عبور» ended up above the actual work. 99 leaves
+     * plenty of room for new resources to be inserted before it.
+     */
+    protected static ?int $navigationSort = 99;
+
+    /**
      * @var array<string, mixed>
      */
     // Holds the form's live values — see ->statePath('data') below.

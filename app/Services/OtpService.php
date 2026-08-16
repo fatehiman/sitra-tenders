@@ -10,12 +10,28 @@ use App\Sms\SmsResult;
 use Illuminate\Support\Facades\Hash;
 
 /**
- * Registration-mobile OTP challenges. Keyed by mobile only — the `users`
- * row doesn't exist until the code is verified (see ARCHITECTURE.md's
+ * Mobile-number OTP challenges. Keyed by mobile only — for registration the
+ * `users` row doesn't exist until the code is verified (see ARCHITECTURE.md's
  * "Registration + OTP flow").
+ *
+ * Two flows use this service:
+ *   registration      — prove you own a number before an account exists;
+ *   finalising a bid  — prove the person pressing «ثبت نهایی» is holding the
+ *                       phone of the account that is logged in.
+ *
+ * They share one table and one keying scheme deliberately. The two can never
+ * be in flight at the same time for the same number (you cannot be
+ * registering and logged in at once), so there is nothing to keep apart. The
+ * only place they differ is `purpose` in the sent_sms_log row, which exists
+ * so support can tell the two kinds of send apart on the bill.
  */
 class OtpService
 {
+    /** sent_sms_log `purpose` values — see PURPOSE_* below. */
+    public const PURPOSE_REGISTRATION = 'otp_registration';
+
+    public const PURPOSE_BID_SUGGESTION = 'otp_bid_suggestion';
+
     /** How long a code stays valid: 2 minutes. */
     private const TTL_SECONDS = 120;
 
@@ -56,8 +72,11 @@ class OtpService
      * @throws OtpThrottledException if the previous code for this mobile
      *                               was issued less than the resend cooldown ago
      */
-    public function issue(string $mobile, ?string $ip = null): SmsResult
-    {
+    public function issue(
+        string $mobile,
+        ?string $ip = null,
+        string $purpose = self::PURPOSE_REGISTRATION,
+    ): SmsResult {
         $previous = OtpVerification::where('mobile', $mobile)->latest('id')->first();
 
         if ($previous && $previous->created_at->diffInSeconds(now()) < self::RESEND_COOLDOWN_SECONDS) {
@@ -92,7 +111,7 @@ class OtpService
         // exactly what the provider's support desk will ask for.
         SentSmsLog::create([
             'mobile' => $mobile,
-            'purpose' => 'otp_registration',
+            'purpose' => $purpose,
             'provider' => config('sms.default'),
             'template' => 'otp',
             'status' => $result->ok ? 'sent' : 'failed',

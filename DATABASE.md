@@ -2,6 +2,11 @@
 
 MySQL 8. All dates/times stored as Gregorian (`datetime`); Jalali is a
 display/input-layer concern only (see [ARCHITECTURE.md](ARCHITECTURE.md#calendar--localization)).
+The values written are **Tehran wall-clock time** — `config('app.timezone')`
+is `Asia/Tehran`, not UTC (see
+[ARCHITECTURE.md](ARCHITECTURE.md#timezone-asiatehran)). MySQL `datetime`
+stores no timezone either way, so this is a change in what the numbers mean,
+not in the column types.
 This reflects the schema as currently planned/implemented — update this file
 whenever a migration changes it.
 
@@ -163,36 +168,93 @@ naming the tenders that use the good (see
 
 ## `bid_suggestions` (پیشنهادات)
 
-The *content* of a پیشنهاد is still deliberately minimal — one free-text
-note — because the real bid contents (Form الف / Form ب) are not specified
-yet. The *lifecycle* around it is real.
+A user's priced offer on a tender, built up over the five-step wizard (see
+[ARCHITECTURE.md](ARCHITECTURE.md#پیشنهاد-bidoffer-lifecycle)). The row is
+created as a **draft** the moment the wizard is opened and is rewritten on
+every step; finalising it stamps `submitted_at` and `tracking_code`.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint PK | |
 | `bid_id` | bigint FK → bids.id | |
 | `user_id` | bigint FK → users.id | |
-| `note` | text, nullable | free-text field collected by the scaffold modal |
-| `status` | varchar(20), indexed, default `submitted` | `App\Enums\SuggestionStatus`: `submitted`, `form_a`, `form_b`, `approved`, `rejected`, `cancelled`. A string, not a MySQL ENUM, so adding a review step later is a code change |
-| `submitted_at` | timestamp, nullable | when the user pressed submit — **not** `created_at`, because a cancelled row is reused if the user bids again |
+| `note` | text, nullable | «متن پیشنهاد» — step 2's free text |
+| `total_price` | unsigned bigint, nullable | the bid price in **whole ریال**: the sum of `bid_suggestion_items.total_price`. Stored rather than summed on read because the tenders table and the «پیشنهادهای دریافتی» modal both show it per row. Only ever written by `BidSuggestion::recalculateTotal()`. `unsignedBigInteger`, not `integer`, because a signed int overflows at ~2.1 billion ریال — well inside the range of a real tender |
+| `tracking_code` | varchar(8), nullable, **unique** | the «کد پیگیری» shown to the user. Issued **only** at finalisation, so "has a code" and "was finalised" are the same question. Stored as a string: leading zeros are part of it |
+| `status` | varchar(20), indexed, default `submitted` | `App\Enums\SuggestionStatus`: `draft`, `submitted`, `form_a`, `form_b`, `approved`, `rejected`, `cancelled`. A string, not a MySQL ENUM, so adding a review step later is a code change |
+| `submitted_at` | timestamp, nullable | when the user finalised — **not** `created_at`, because the row exists as a draft first and is reused if a cancelled bid is re-sent |
+| `otp_verified_at` | timestamp, nullable | when the SMS challenge that finalised this bid was passed. Audit only — the challenge itself is checked against `otp_verifications` at submit time |
 | `cancelled_at` | timestamp, nullable | set by the admin's «لغو» action |
 | `cancelled_by` | bigint FK → users.id, nullable, nullOnDelete | which admin cancelled it |
 | `cancel_reason` | varchar(500), nullable | optional free text from the cancel modal |
 | `created_at` | timestamp | row creation; no `updated_at` |
 
 Unique constraint on `(bid_id, user_id)` — enforces "only once per tender"
-at the data layer regardless of what the UI does. **This is why cancelling
-does not create a second row:** a user re-bidding on a tender whose previous
-bid was cancelled reuses the same row (`BidSuggestion::resubmit()`), which
-overwrites the previous cancellation's who/when/why. If a full audit trail
-is ever required, add a history table — do not drop this index.
+at the data layer regardless of what the UI does. **This is why re-bidding
+does not create a second row:** a user bidding again on a tender whose
+previous bid was cancelled reuses the same row (`BidSuggestion::startDraft()`
+turns it back into a draft), which overwrites the previous cancellation's
+who/when/why. If a full audit trail is ever required, add a history table —
+do not drop this index.
 
-Two rules read this table rather than storing their answer:
+Three rules read this table rather than storing their answer:
 
 - **«ارسال نشده» is the absence of a row** (or a cancelled one), not a
   status value.
 - **«دردست بررسی» is `submitted` + the tender's `expire_at` in the past** —
   derived on read for the same reason `bids` has no `status` column.
+- **A draft is not a bid.** `draft` and `cancelled` are both excluded from
+  `BidSuggestion::scopeActive()`, so a draft neither locks its tender nor
+  appears to staff. Were it otherwise, any user could freeze any tender
+  indefinitely just by opening the wizard and walking away.
+
+### `bid_suggestion_items`
+
+One priced line: "for requirement row X, I quote Y ریال each".
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `bid_suggestion_id` | bigint FK → bid_suggestions.id, cascade delete | |
+| `bid_good_requirement_id` | bigint FK → bid_good_requirements.id, **cascade** delete | points at the tender's requirement, **not** at the good: the quantity being priced belongs to the requirement, and the same good can be required by many tenders at different quantities |
+| `unit_price` | unsigned bigint | whole ریال per unit |
+| `total_price` | unsigned bigint | `unit_price` × the requirement's quantity, **stored, not computed on read** — it freezes what the user actually saw and agreed to, instead of silently re-pricing their offer if staff change the requested quantity later |
+| `created_at` / `updated_at` | timestamp | |
+
+Unique constraint on `(bid_suggestion_id, bid_good_requirement_id)`.
+
+**A good the user does not want to supply has NO ROW** — not a zero and not
+a null price. "Priced" and "not priced" is the presence or absence of a row,
+the same "absence is the state" idea «ارسال نشده» uses above.
+
+### `bid_suggestion_attachments`
+
+Deliberately the same shape as [`bid_attachments`](#bid_attachments) and
+[`good_drawings`](#good_drawings-نقشه), so all three use the identical
+upload-then-list pattern.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `bid_suggestion_id` | bigint FK → bid_suggestions.id, cascade delete | |
+| `type` | varchar(20), indexed, default `document` | `App\Enums\SuggestionAttachmentType`: `document` (step 2's پیوست‌ها, max 10) or `payment_receipt` (step 3's رسید پرداخت / ضمانت‌نامه بانکی). One table rather than two because everything else about them is identical |
+| `disk` | string | e.g. `public` |
+| `path` | string | storage path |
+| `original_name` | string | original upload filename |
+| `mime_type` | string | server-verified, not trusted from the client |
+| `size` | unsigned bigint | bytes |
+| `created_at` | timestamp | |
+
+Allowed types differ by `type`: documents take the same list as
+`bid_attachments` (shared as `BidForm::ACCEPTED_ATTACHMENT_TYPES`), receipts
+take **PDF and images only**.
+
+Unlike the other two attachment tables, these rows are **reconciled**, not
+just appended: a draft is re-saved many times and the user can add and
+remove files in between. `BidSuggestionAttachment::sync()` does that, and it
+deletes the file from disk as well as the row so abandoned drafts do not fill
+the disk. The DB cascade cannot do that part — it fires no model events —
+which is also why `BidSuggestion::purge()` deletes files explicitly.
 
 ## Standard Laravel tables (unchanged)
 

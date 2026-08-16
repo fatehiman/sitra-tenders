@@ -432,6 +432,27 @@ class Register extends BaseRegister
      */
     public function register(): ?RegistrationResponse
     {
+        /*
+         * Land a brand-new account on the tenders list, always.
+         *
+         * THE BUG THIS FIXES: Filament's RegistrationResponse redirects with
+         * redirect()->intended(...), and "intended" is whatever URL the
+         * auth middleware stashed in the session the last time somebody hit
+         * a protected page while logged out. So a visitor who happened to
+         * open, say, /goods/1/edit before registering was sent straight
+         * there afterwards — a page their brand-new `user` role is not even
+         * allowed to open. Worse, that session key survives across visits,
+         * so it looked like a random, unreproducible redirect.
+         *
+         * Restoring an intended URL is the right behaviour for LOGIN (you
+         * were going somewhere, we interrupted you, we put you back). It is
+         * never right for REGISTRATION: the person had no account when that
+         * URL was recorded, so it cannot have been meant for them. Dropping
+         * the key here makes intended() fall back to the panel root, which
+         * hands off to the مناقصات list.
+         */
+        session()->forget('url.intended');
+
         if (! app(OtpService::class)->verifiedWithin((string) ($this->data['mobile'] ?? ''))) {
             Notification::make()
                 ->title('مهلت تکمیل ثبت‌نام به پایان رسید.')

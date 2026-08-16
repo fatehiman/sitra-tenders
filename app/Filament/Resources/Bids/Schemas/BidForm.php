@@ -24,8 +24,14 @@ class BidForm
     /**
      * Attachment types explicitly required by the spec: PDF, Word/Excel/
      * PowerPoint (legacy + OOXML), all image types, all video types, mp3.
+     *
+     * Public because the user's پیشنهاد wizard accepts exactly the same list
+     * (App\Filament\Resources\Bids\Pages\SubmitSuggestion) — the requirement
+     * is worded identically for both sides. Sharing the constant means the
+     * two can never drift into accepting different things, which would be a
+     * confusing bug to chase: "why did my .pptx upload here but not there?"
      */
-    private const ACCEPTED_ATTACHMENT_TYPES = [
+    public const ACCEPTED_ATTACHMENT_TYPES = [
         'application/pdf',
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

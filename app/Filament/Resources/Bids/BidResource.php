@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Bids;
 use App\Filament\Resources\Bids\Pages\CreateBid;
 use App\Filament\Resources\Bids\Pages\EditBid;
 use App\Filament\Resources\Bids\Pages\ListBids;
+use App\Filament\Resources\Bids\Pages\SubmitSuggestion;
 use App\Filament\Resources\Bids\RelationManagers\AttachmentsRelationManager;
 use App\Filament\Resources\Bids\Schemas\BidForm;
 use App\Filament\Resources\Bids\Tables\BidsTable;
@@ -70,13 +71,23 @@ class BidResource extends Resource
         ];
     }
 
-    /** URL -> page class. These become /bids, /bids/create, /bids/1/edit. */
+    /**
+     * URL -> page class. These become /bids, /bids/create, /bids/1/edit and
+     * /bids/1/suggest.
+     *
+     * The last one is not part of the usual CRUD set: it is the user-facing
+     * «ارسال پیشنهاد» wizard. It is registered as a resource page rather
+     * than a route in routes/web.php so it inherits the panel's auth
+     * middleware, breadcrumbs and layout for free, and so the row button can
+     * link to it with BidResource::getUrl('suggest', ...).
+     */
     public static function getPages(): array
     {
         return [
             'index' => ListBids::route('/'),
             'create' => CreateBid::route('/create'),
             'edit' => EditBid::route('/{record}/edit'),
+            'suggest' => SubmitSuggestion::route('/{record}/suggest'),
         ];
     }
 }

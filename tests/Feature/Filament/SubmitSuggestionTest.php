@@ -329,6 +329,37 @@ class SubmitSuggestionTest extends TestCase
     }
 
     /**
+     * Submitting an incomplete bid must fail gracefully.
+     *
+     * finalize() is reached through a plain wire:submit, which has none of
+     * the Halt-catching wrappers Filament puts around actions and wizard
+     * steps — so an uncaught Halt from the completeness check would be a
+     * 500 rather than a "you are missing a receipt" notice.
+     */
+    public function test_submitting_an_incomplete_bid_does_not_blow_up(): void
+    {
+        $this->seed(RoleSeeder::class);
+        Storage::fake('public');
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000066', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000067', '0499370899');
+        $bid = $this->makeBidWithGoods($admin);
+
+        $this->actingAs($user);
+
+        // Nothing priced, nothing uploaded, no code — straight to submit.
+        Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()])
+            ->call('finalize')
+            ->assertHasNoErrors();
+
+        $draft = BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->firstOrFail();
+
+        $this->assertSame(SuggestionStatus::Draft, $draft->status);
+        $this->assertNull($draft->tracking_code);
+    }
+
+    /**
      * The deadline is re-checked on the server. A page left open past the
      * expiry must not be able to write a bid.
      */

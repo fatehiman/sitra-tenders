@@ -767,15 +767,28 @@ class SubmitSuggestion extends Page
 
     /**
      * The form's submit handler (see the Blade view's wire:submit).
+     *
+     * The try/catch is not decoration. Filament swallows Halt for it in the
+     * two places it raises one itself — inside an Action
+     * (InteractsWithActions) and inside a wizard step transition
+     * (Wizard::nextStep) — but this method is reached through a plain
+     * `wire:submit`, which has neither wrapper. An uncaught Halt here would
+     * surface as a 500 and, worse, would throw away the redirect and the
+     * notification that guard()/assertReadyToFinalize() had already queued
+     * to explain what went wrong.
      */
     public function finalize(): void
     {
-        $this->guard();
+        try {
+            $this->guard();
 
-        // Persists the last step's uploads/prices and re-runs the
-        // completeness rules against what is actually stored.
-        $this->saveDraft(notify: false);
-        $this->assertReadyToFinalize();
+            // Persists the last step's uploads/prices and re-runs the
+            // completeness rules against what is actually stored.
+            $this->saveDraft(notify: false);
+            $this->assertReadyToFinalize();
+        } catch (Halt) {
+            return;
+        }
 
         $mobile = $this->currentUser()->mobile;
         $code = trim((string) ($this->data['otp_code'] ?? ''));

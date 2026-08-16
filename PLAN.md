@@ -312,9 +312,20 @@ updated as work lands — it's the source of truth for "what's left."
       array key cannot identify its row). Both had produced real bugs —
       draft saves failing on step 1, and prices landing on the wrong good.
       See [ARCHITECTURE.md](ARCHITECTURE.md#two-filament-traps-this-page-hit-both-silent)
-- [x] Twelve new tests (wizard happy path, draft restore, tamper guards,
-      SMS gating, role/deadline refusals, withdrawal, tracking codes) plus a
-      real-HTTP render check for the new page; 55 passing
+- [x] `finalize()` catches `Halt` itself. It is reached through a plain
+      `wire:submit`, which has neither of the wrappers Filament puts around
+      actions and wizard steps — so an incomplete submit would have been a
+      500 instead of a "you are missing a receipt" notice
+- [x] Thirteen new tests (wizard happy path, draft restore, tamper guards,
+      SMS gating, role/deadline refusals, withdrawal, tracking codes,
+      incomplete submit) plus a real-HTTP render check for the new page;
+      56 passing
+- [x] **Deployed to sitra.ir on 2026-08-16.** Three migrations ran clean;
+      `composer dump-autoload --optimize --no-dev` first (four new classes,
+      and the server's autoloader is optimized), then `php artisan optimize`.
+      Verified live: `/` → 302 `/login`, `/login` and `/register` 200,
+      `bids/{record}/suggest` registered, `config('app.timezone')` reports
+      `Asia/Tehran`, no new entries in `storage/logs/laravel.log`
 
 ## Open items to revisit later (not blocking v1)
 

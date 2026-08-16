@@ -92,6 +92,16 @@ collapsed-sidebar state, which an override stylesheet would break. The nav
 holds five short Persian labels, so 320px left a wide empty gutter; the
 content cap wasted most of a wide monitor on the مناقصات and کالاها tables.
 
+### No global search
+
+`->globalSearch(false)` in `AppPanelProvider`. Filament puts a search box in
+the topbar next to the user menu by default, but that box searches only
+resources declaring `getGloballySearchableAttributes()` — and no resource
+here declares any, so it was a field that could never return a result. A
+control that always comes back empty reads as a broken app. Each table keeps
+its own search box, which is the one that actually works. If a resource ever
+does declare globally-searchable attributes, drop this line.
+
 Note this does **not** widen `/login` or `/register`: `SimplePage` prefers
 its own `getMaxWidth()` over the panel's content width. The registration
 wizard sets that itself.
@@ -217,6 +227,47 @@ form requires; `company_name` being non-null is what actually flips display
 everywhere (panel header, tenders list "submitted by", etc.) — the two are
 kept in sync at write time (company_name is only ever set when
 person_type = company), so the accessor only needs to check one column.
+
+## Deleting a user account
+
+Admin-only, from the کاربران table, and **permanent** — there is no soft
+delete on `users`. Three rules, in the order they are enforced:
+
+1. **Admins cannot be deleted** — not by another admin, not by themselves.
+   `UserPolicy::delete()` refuses both, so the URL is refused and not just
+   the button hidden. Demoting the account to کارشناس/کاربر first is the
+   escape hatch, and a shield icon on admin rows says so — Filament removes
+   a policy-denied button silently, and an unexplained gap where every other
+   row has a delete button reads as a bug (same reasoning as the lock icon
+   on مناقصات).
+2. **An account that published مناقصات cannot be deleted either**, and this
+   one is a hard refusal with an explanation rather than a hidden button.
+   `bids.created_by` is `cascadeOnDelete`, so removing, say, a کارشناس would
+   delete their tenders *and* every **other** user's پیشنهاد on them —
+   third parties losing their bids as a side effect of an unrelated
+   deletion. The notification names the tenders in the way; the admin
+   deletes or reassigns them first. (This is deliberately not in the policy,
+   for the same reason `GoodPolicy::delete()` leaves the in-use check to
+   `GoodsTable`: the explanation matters more than the tidiness.)
+3. **Everything else goes, and the confirmation says how much.** The modal
+   is per-record and counts the account's پیشنهادها — «این کاربر 3 پیشنهاد
+   ثبت کرده است که همگی به همراه فایل‌های پیوست آن‌ها حذف می‌شوند» — or says
+   plainly that there are none. Drafts are counted alongside sent bids:
+   both are rows that vanish, and a draft still has uploaded files behind it.
+
+`User::purge()` does the work, and the reason it exists at all is the
+**files**. The DB cascade takes the `bid_suggestions`, `bid_suggestion_items`
+and `bid_suggestion_attachments` rows, but it cannot delete the uploads those
+rows point at and it fires no model events — so `purge()` runs every
+suggestion through `BidSuggestion::purge()` (the same disk cleanup the
+owner's «انصراف» does), clears the account's `otp_verifications` rows, and
+only then deletes the row. The Filament action overrides `->action()` for
+exactly this reason; the default `$record->delete()` would orphan every file.
+
+**There is no bulk delete on کاربران**, and there should not be: the
+tender check is per-record and the confirmation count is per-record, neither
+of which a bulk action can express — it can only report one outcome for a
+mixed selection. Same call as the کالاها table.
 
 ## SMS gateway
 

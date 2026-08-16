@@ -31,6 +31,15 @@ No email column — login is by mobile number, not email (see
 | `is_active` | boolean, default true | lets admin disable an account without deleting it |
 | `created_at` / `updated_at` | timestamp | |
 
+**There is no soft delete on this table.** Deleting an account from کاربران
+is a real `DELETE`, and the foreign keys decide what goes with it:
+`bid_suggestions.user_id` cascades (their پیشنهادها, price lines and
+attachment rows), while `users.created_by`, `goods.created_by` and
+`bid_suggestions.cancelled_by` are all `nullOnDelete` (those rows survive,
+just orphaned). `bids.created_by` cascades too, which is exactly why an
+account that published tenders may **not** be deleted — see
+[ARCHITECTURE.md](ARCHITECTURE.md#deleting-a-user-account).
+
 Roles (`admin` / `staff` / `user`, extensible) live in spatie/laravel-permission's
 own tables (`roles`, `permissions`, `model_has_roles`,
 `model_has_permissions`, `role_has_permissions`) — not a column on `users`,

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\PersonType;
+use App\Enums\RoleName;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Models\Contracts\HasName;
@@ -124,5 +125,68 @@ class User extends Authenticatable implements FilamentUser, HasName
     public function bidSuggestions(): HasMany
     {
         return $this->hasMany(BidSuggestion::class);
+    }
+
+    /*
+     * ---- Deleting an account ---------------------------------------------
+     */
+
+    /**
+     * Delete this account and everything that belongs to it, permanently.
+     *
+     * "Everything" is narrower than it sounds, because the foreign keys
+     * already decide most of it (see the migrations):
+     *
+     *   bid_suggestions.user_id   cascadeOnDelete  → their پیشنهادها go, and
+     *                                                with them their price
+     *                                                lines and file ROWS
+     *   users.created_by          nullOnDelete     → accounts they created
+     *                                                stay, just orphaned
+     *   goods.created_by          nullOnDelete     → same for کالاها
+     *   bid_suggestions.cancelled_by nullOnDelete  → «چه کسی لغو کرد» is lost,
+     *                                                the cancelled bid stays
+     *
+     * What a database cascade CANNOT do is delete the uploaded FILES those
+     * attachment rows point at, and it fires no model events, so there is
+     * nowhere else this could live. Hence the loop: every suggestion is put
+     * through its own purge(), which clears the disk first — exactly what
+     * the owner's «انصراف» button does, one bid at a time.
+     *
+     * Note what is deliberately NOT handled here: tenders this user
+     * published (`bids.created_by` is cascadeOnDelete, so they would take
+     * OTHER people's bids down with them). Deleting such an account is
+     * refused up-front in UsersTable instead, with an explanation — see
+     * ownsTenders() below.
+     */
+    public function purge(): void
+    {
+        foreach ($this->bidSuggestions()->with('attachments')->get() as $suggestion) {
+            $suggestion->purge();
+        }
+
+        // otp_verifications is keyed by mobile number and has no foreign key
+        // back to users (rows exist before an account does, during
+        // registration), so nothing removes these automatically.
+        OtpVerification::where('mobile', $this->mobile)->delete();
+
+        $this->delete();
+    }
+
+    /**
+     * Has this account published any مناقصه?
+     *
+     * If so it must not be deleted: `bids.created_by` cascades, so removing
+     * the account would silently delete those tenders *and* every other
+     * user's پیشنهاد on them.
+     */
+    public function ownsTenders(): bool
+    {
+        return $this->bids()->exists();
+    }
+
+    /** Is this an admin account? Admins may not be deleted by anyone. */
+    public function isAdmin(): bool
+    {
+        return $this->hasRole(RoleName::Admin->value);
     }
 }

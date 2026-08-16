@@ -80,6 +80,17 @@ class AppPanelProvider extends PanelProvider
             ->sidebarWidth('15.625rem')
             ->maxContentWidth(Width::Full)
             /*
+             * Removes the search box Filament puts in the topbar next to the
+             * user menu. That box is GLOBAL search: it only ever finds
+             * records of resources that declare
+             * getGloballySearchableAttributes(), and no resource in this app
+             * declares any — so it was a permanently empty search field, and
+             * a control that never returns a result reads as a broken app.
+             * Each table keeps its own search box, which is the one people
+             * actually use.
+             */
+            ->globalSearch(false)
+            /*
              * Typography: Vazirmatn, served from our own public/ folder.
              *
              * By default Filament would fetch its font from Bunny Fonts (an

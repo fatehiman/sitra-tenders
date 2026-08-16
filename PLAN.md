@@ -327,6 +327,34 @@ updated as work lands — it's the source of truth for "what's left."
       `bids/{record}/suggest` registered, `config('app.timezone')` reports
       `Asia/Tehran`, no new entries in `storage/logs/laravel.log`
 
+## Phase 11 — deleting user accounts (2026-08-16)
+
+- [x] **«حذف» on کاربران, admin-only and permanent.** The confirmation
+      counts the account's پیشنهادها («این کاربر 3 پیشنهاد ثبت کرده است…»)
+      or says there are none, so nothing disappears unannounced. Drafts
+      count too — they are rows with files behind them
+- [x] **Admins are undeletable**, including by themselves
+      (`UserPolicy::delete()`), with a shield icon on those rows explaining
+      the missing button rather than leaving a silent gap
+- [x] **An account that published مناقصات is refused**, with a notification
+      naming the tenders. `bids.created_by` cascades, so deleting a
+      کارشناس would have taken their tenders *and* every other user's bid
+      on them. Chosen over reassigning tenders or deleting them silently
+- [x] `User::purge()` deletes the uploaded FILES of every پیشنهاد (via
+      `BidSuggestion::purge()`) and the account's `otp_verifications` rows
+      before the row goes — the DB cascade takes rows only. No bulk delete,
+      for the same per-record reasons as کالاها. See
+      [ARCHITECTURE.md](ARCHITECTURE.md#deleting-a-user-account)
+- [x] **Global search box removed** (`->globalSearch(false)`): no resource
+      declares globally-searchable attributes, so the topbar field could
+      never return a result
+- [x] Three new tests (files-and-rows really go, admins refused, tender
+      owner refused); 59 passing
+- [x] **Deployed to sitra.ir on 2026-08-16.** No migrations and no new
+      classes, so a file ship plus `php artisan optimize` was enough.
+      Verified live: `/` → 302, `/login` → 200, everything `sitra`-owned,
+      no new entries in `storage/logs/laravel.log`
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not

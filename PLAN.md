@@ -355,6 +355,48 @@ updated as work lands — it's the source of truth for "what's left."
       Verified live: `/` → 302, `/login` → 200, everything `sitra`-owned,
       no new entries in `storage/logs/laravel.log`
 
+## Phase 12 — ودیعه deposit, terms step, and the پرداخت step (2026-08-18)
+
+- [x] **`bids.deposit_amount`** — admin sets a whole-ریال ودیعه (bid-guarantee
+      deposit) on the tender create/edit form; shown to the bidder at the top
+      of the wizard's «پرداخت» step
+- [x] **پیشنهاد wizard grew from five steps to six.** New step 1 «شرایط
+      مناقصه» reuses the «مشاهده» eye icon's title/description/attachments
+      content and gates on a «شرایط مناقصه را خواندم و موافق هستم» checkbox
+      before anything else can be filled in. New step 2 «پرداخت» replaces
+      the old step 3 «رسید پرداخت» with three payment methods: پرداخت
+      الکترونیک (a placeholder link — no real gateway exists yet), بارگذاری
+      ضمانت‌نامه بانکی (mandatory file), or نامه کسر از مطالبات
+      (fill-in-the-blank letter, optional attachment). قیمت کالاها and
+      توضیحات و پیوست‌ها moved down to steps 3 and 4; تایید نهایی and کد
+      تایید are unchanged at 5 and 6
+- [x] **The checkbox and the payment-method fields carry no `->required()`**,
+      for the same reason nothing else in this wizard does — see
+      [ARCHITECTURE.md](ARCHITECTURE.md#two-filament-traps-this-page-hit-both-silent).
+      Each new step's own `afterValidation()` halts navigation instead, and
+      `assertReadyToFinalize()` (via the new `paymentProblem()` helper) is
+      the final gate before the SMS and at submit time
+- [x] **`claims_decrease_org_name` is never taken from the browser.** Every
+      draft save overwrites it with `Auth::user()->display_name` directly —
+      the same trust rule `bid_good_requirements.quantity` follows. Pinned by
+      a test that tries to smuggle a different name through `fillForm()`
+- [x] **«حذف پیش‌نویس»** next to «ذخیره پیش‌نویس» — deletes the draft and its
+      files outright, no confirmation (a draft was never submitted), and
+      re-checks `isDraft()` itself before calling `purge()` in case another
+      tab finalised the same bid meanwhile
+- [x] **`SuggestionAttachmentType::PaymentReceipt` renamed to
+      `BankGuaranteeLetter`**, plus a new `ClaimsDecreaseAttachment` case.
+      Because this app was already live on sitra.ir, a data migration
+      relabels any existing `payment_receipt` row to `bank_guarantee_letter`
+      first — removing the enum case outright would have thrown on the next
+      read of an old row instead of silently losing it
+- [x] Ten new/updated wizard tests (terms gate, payment-method gate, the
+      claims-decrease org-name trust rule, delete-draft, plus the existing
+      happy-path/draft-restore/tamper-guard tests updated for the new step
+      order); 63 passing
+- [ ] **Deploy to sitra.ir** — three new migrations (`deposit_amount`, the
+      new `bid_suggestions` columns, the attachment-type relabel)
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not

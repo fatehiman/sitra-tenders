@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\Bids\Pages;
 
+use App\Enums\PaymentType;
 use App\Enums\RoleName;
 use App\Enums\SuggestionAttachmentType;
 use App\Exceptions\OtpThrottledException;
 use App\Filament\Resources\Bids\BidResource;
 use App\Filament\Resources\Bids\Schemas\BidForm;
 use App\Models\Bid;
+use App\Models\BidAttachment;
 use App\Models\BidGoodRequirement;
 use App\Models\BidSuggestion;
 use App\Models\BidSuggestionAttachment;
@@ -15,17 +17,21 @@ use App\Models\User;
 use App\Services\OtpService;
 use App\Sms\SmsResult;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Repeater\TableColumn;
+use Filament\Forms\Components\RichEditor\RichContentRenderer;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
 use Filament\Schemas\Components\Actions as SchemaActions;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Wizard;
 use Filament\Schemas\Components\Wizard\Step;
@@ -36,38 +42,49 @@ use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
- * «ارسال پیشنهاد» — the five-step wizard a user builds their bid in.
+ * «ارسال پیشنهاد» — the six-step wizard a user builds their bid in.
  *
  * ---------------------------------------------------------------------------
  * Why this is a full page and not a modal
  * ---------------------------------------------------------------------------
  * The bid used to be a one-field modal on the مناقصات table. It now carries a
- * price for every good the tender asks for, ten attachments, a payment
- * receipt and an SMS confirmation — none of which fits in a dialog, and none
- * of which can be saved as a draft from one, because closing a modal throws
- * its state away. A page has a URL, so a half-finished bid is somewhere the
- * user can come back to.
+ * price for every good the tender asks for, ten attachments, a ودیعه payment
+ * and an SMS confirmation — none of which fits in a dialog, and none of which
+ * can be saved as a draft from one, because closing a modal throws its state
+ * away. A page has a URL, so a half-finished bid is somewhere the user can
+ * come back to.
  *
  * ---------------------------------------------------------------------------
  * The steps
  * ---------------------------------------------------------------------------
- *   1 «قیمت کالاها»      — every «کالای مورد نیاز» of the tender, one row
+ *   1 «شرایط مناقصه»     — the tender's own description and attachments,
+ *                          exactly as the «مشاهده» eye icon on the مناقصات
+ *                          table shows them, plus a checkbox the user must
+ *                          tick to say they read and agree before continuing.
+ *   2 «پرداخت»           — the ودیعه (bid-guarantee deposit) amount is shown
+ *                          at the top, then one of three payment methods:
+ *                          پرداخت الکترونیک (a placeholder link — no real
+ *                          gateway yet), بارگذاری ضمانت‌نامه بانکی (a
+ *                          mandatory file), or نامه کسر از مطالبات (a
+ *                          fill-in-the-blank letter, with an optional
+ *                          attachment).
+ *   3 «قیمت کالاها»      — every «کالای مورد نیاز» of the tender, one row
  *                          each, with a ریال box for the unit price. The line
  *                          total (price × requested quantity) and the grand
  *                          total update as soon as a box loses focus. Leaving
  *                          a box empty means "I am not supplying this good".
- *   2 «توضیحات و پیوست‌ها» — free text, plus up to ten supporting files.
- *   3 «رسید پرداخت»      — the رسید پرداخت / ضمانت‌نامه بانکی.
- *   4 «تایید نهایی»      — shows the account's mobile number and explains
+ *   4 «توضیحات و پیوست‌ها» — free text, plus up to ten supporting files.
+ *   5 «تایید نهایی»      — shows the account's mobile number and explains
  *                          what happens next. Pressing «بعدی» is what sends
  *                          the SMS, so the code is only spent when the user
  *                          says they have the phone in hand.
- *   5 «کد تایید»         — type the code; submitting finalises the bid and
+ *   6 «کد تایید»         — type the code; submitting finalises the bid and
  *                          issues the 8-digit «کد پیگیری».
  *
  * ---------------------------------------------------------------------------
@@ -77,7 +94,11 @@ use Illuminate\Validation\ValidationException;
  * writes the whole form to the database (a `bid_suggestions` row with status
  * «پیش‌نویس», plus its items and attachment rows). Re-opening the page
  * re-fills the wizard from those rows. Nothing depends on the browser
- * keeping anything.
+ * keeping anything. «حذف پیش‌نویس», next to it, throws that row away
+ * entirely and sends the user back to the مناقصات list — no confirmation,
+ * because a draft is not a bid yet: nothing has been submitted, so there is
+ * nothing to protect the user from that starting the wizard again would not
+ * already fix.
  *
  * A draft is deliberately NOT a bid: staff cannot see it, and it does not
  * lock the tender. See App\Enums\SuggestionStatus::isActive().
@@ -111,15 +132,6 @@ class SubmitSuggestion extends Page
 
     /** Holds the wizard's live values — see ->statePath('data') in form(). */
     public ?array $data = [];
-
-    /**
-     * Receipts are a scan or a photo of a piece of paper, so the list is
-     * much narrower than step 2's: no video, no audio, no spreadsheets.
-     */
-    private const ACCEPTED_RECEIPT_TYPES = [
-        'application/pdf',
-        'image/*',
-    ];
 
     /**
      * Per-request memo of the tender's requirement rows, keyed by id.
@@ -248,9 +260,10 @@ class SubmitSuggestion extends Page
         return $schema
             ->components([
                 Wizard::make([
+                    $this->termsStep(),
+                    $this->paymentStep(),
                     $this->pricesStep(),
                     $this->detailsStep(),
-                    $this->receiptStep(),
                     $this->confirmStep(),
                     $this->otpStep(),
                 ])
@@ -285,7 +298,214 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 1 — a price box against every good the tender asks for.
+     * Step 1 — show the tender's own terms and require the user to accept
+     * them before anything else can be filled in.
+     *
+     * Same title/description/attachments the «مشاهده» eye icon shows on the
+     * مناقصات table (see BidsTable::viewDetailsAction()) — reusing that exact
+     * content is the point: the user is agreeing to the same terms, in the
+     * same words, that the table already lets them read before starting.
+     *
+     * The checkbox itself carries NO ->required() rule, for the usual reason
+     * (see the class docblock's "Two Filament traps" note, and
+     * ARCHITECTURE.md#two-filament-traps-this-page-hit-both-silent): that
+     * would break every draft save from step 1 onward. Instead this step's
+     * own afterValidation() halts navigation — not saveDraft() — if the box
+     * is unchecked, which only runs when the user tries to move past THIS
+     * step, never on an earlier one.
+     */
+    private function termsStep(): Step
+    {
+        return Step::make('شرایط مناقصه')
+            ->description('شرح و پیوست‌های مناقصه را مطالعه کنید و در صورت موافقت، تیک زیر را بزنید.')
+            ->icon(Heroicon::OutlinedClipboardDocumentCheck)
+            ->schema([
+                Placeholder::make('terms_bid_description')
+                    ->hiddenLabel()
+                    ->content(fn (): HtmlString => new HtmlString(
+                        RichContentRenderer::make($this->getRecord()->description ?? '')->toHtml()
+                    ))
+                    ->columnSpanFull(),
+                Placeholder::make('terms_bid_attachments')
+                    ->label('پیوست‌های مناقصه')
+                    ->content(fn (): HtmlString => $this->renderBidAttachmentLinks())
+                    ->columnSpanFull(),
+                Checkbox::make('terms_accepted')
+                    ->label('شرایط مناقصه را خواندم و موافق هستم')
+                    ->columnSpanFull(),
+            ])
+            ->afterValidation(function (): void {
+                $this->saveDraft(notify: false);
+
+                if (! $this->suggestion()->terms_accepted) {
+                    Notification::make()
+                        ->title('برای ادامه باید با شرایط مناقصه موافقت کنید.')
+                        ->danger()
+                        ->send();
+
+                    throw new Halt;
+                }
+            });
+    }
+
+    /** The tender's own attachments, as the same downloadable link list the «مشاهده» modal shows. */
+    private function renderBidAttachmentLinks(): HtmlString
+    {
+        $attachments = $this->getRecord()->attachments;
+
+        if ($attachments->isEmpty()) {
+            return new HtmlString('برای این مناقصه فایلی پیوست نشده است.');
+        }
+
+        $links = $attachments->map(fn (BidAttachment $attachment): string => Blade::render(
+            '<x-filament::link :href="$url" target="_blank" icon="heroicon-o-paper-clip">{{ $name }}</x-filament::link>',
+            [
+                'url' => Storage::disk($attachment->disk)->url($attachment->path),
+                'name' => $attachment->original_name,
+            ],
+        ))->implode('<br>');
+
+        return new HtmlString($links);
+    }
+
+    /**
+     * Step 2 — the ودیعه payment: the deposit amount, then one of three ways
+     * to pay/guarantee it.
+     *
+     * Same "no ->required() on conditional fields" rule as everywhere else
+     * in this wizard: which fields are mandatory depends on `payment_type`,
+     * and a ->required(fn (Get $get) => ...) would still be evaluated by
+     * Schema::getState() on every draft save from a LATER step — exactly the
+     * otp_code trap. What is actually required per method is checked in
+     * paymentProblem(), called from this step's own afterValidation() (for
+     * immediate feedback) and again from assertReadyToFinalize() (the final
+     * gate before OTP/finalise).
+     */
+    private function paymentStep(): Step
+    {
+        return Step::make('پرداخت')
+            ->description('روش پرداخت ودیعه مناقصه را انتخاب کنید.')
+            ->icon(Heroicon::OutlinedBanknotes)
+            ->schema([
+                Placeholder::make('deposit_amount_notice')
+                    ->label('مبلغ ودیعه مناقصه (ریال)')
+                    ->content(fn (): HtmlString => new HtmlString(
+                        '<strong>'.number_format((int) ($this->getRecord()->deposit_amount ?? 0)).'</strong> ریال'
+                    ))
+                    ->columnSpanFull(),
+                Select::make('payment_type')
+                    ->label('روش پرداخت')
+                    ->native(false)
+                    ->live()
+                    ->options(collect(PaymentType::cases())
+                        ->mapWithKeys(fn (PaymentType $type): array => [$type->value => $type->getLabel()])
+                        ->all())
+                    ->columnSpanFull(),
+
+                // پرداخت الکترونیک — a placeholder link only. No gateway
+                // exists yet, so there is nothing to poll; picking this
+                // option does not block moving to the next step (see
+                // App\Enums\PaymentType::Electronic's docblock).
+                Placeholder::make('electronic_payment_link')
+                    ->label('لینک پرداخت')
+                    ->content(fn (): HtmlString => new HtmlString(Blade::render(
+                        '<x-filament::link href="https://bankurl.com?payment-token=234985702398745" target="_blank" icon="heroicon-o-arrow-top-right-on-square">https://bankurl.com?payment-token=234985702398745</x-filament::link>'
+                    )))
+                    ->helperText('این لینک نمونه است. پس از فعال‌سازی درگاه پرداخت واقعی، وضعیت پرداخت به‌صورت خودکار بررسی خواهد شد.')
+                    ->visible(fn (Get $get): bool => $get('payment_type') === PaymentType::Electronic->value)
+                    ->columnSpanFull(),
+
+                // بارگذاری ضمانت‌نامه بانکی — a mandatory single file.
+                FileUpload::make('bank_guarantee_file')
+                    ->label('ضمانت‌نامه بانکی')
+                    ->helperText('PDF، Word یا تصویر — حداکثر ۲۰ مگابایت.')
+                    ->disk('public')
+                    ->directory('bid-suggestion-guarantees')
+                    ->preserveFilenames()
+                    ->acceptedFileTypes([
+                        'application/pdf',
+                        'application/msword',
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'image/*',
+                    ])
+                    ->maxSize(20480) // 20 MB
+                    ->openable()
+                    ->downloadable()
+                    ->visible(fn (Get $get): bool => $get('payment_type') === PaymentType::BankGuarantee->value)
+                    ->columnSpanFull(),
+
+                // نامه کسر از مطالبات — a fill-in-the-blank version of the
+                // official letter text, in the same order the printed letter
+                // reads it. claims_decrease_org_name is NOT one of these
+                // fields: it is never taken from the browser (see saveDraft())
+                // and is only ever shown back as a read-only Placeholder.
+                Section::make('متن نامه کسر از مطالبات')
+                    ->description('بخش‌های خالی زیر را تکمیل کنید؛ می‌توانید این نامه را خودتان چاپ، مهر و امضا کرده و در قالب فایل پیوست کنید.')
+                    ->visible(fn (Get $get): bool => $get('payment_type') === PaymentType::ClaimsDecrease->value)
+                    ->schema([
+                        TextInput::make('claims_decrease_addressee')
+                            ->label('واحد محترم خرید')
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+                        Placeholder::make('claims_decrease_intro')
+                            ->hiddenLabel()
+                            ->content(new HtmlString(
+                                'با سلام<br>احتراماً خواهشمند است دستور فرمائید سپرده مناقصه عمومی شماره'
+                            ))
+                            ->columnSpanFull(),
+                        TextInput::make('claims_decrease_tender_number')
+                            ->label('شماره مناقصه')
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+                        TextInput::make('claims_decrease_subject')
+                            ->label('با موضوع')
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+                        Placeholder::make('claims_decrease_org_label')
+                            ->label('از محل مطالبات این شرکت/کارگاه/فروشگاه')
+                            ->content(fn (): string => $this->currentUser()->display_name)
+                            ->columnSpanFull(),
+                        Placeholder::make('claims_decrease_outro')
+                            ->hiddenLabel()
+                            ->content(new HtmlString(
+                                'کسر گردد.<br><br>با تشکر<br>مهر و امضا پیمانکار'
+                            ))
+                            ->columnSpanFull(),
+                        FileUpload::make('claims_decrease_attachment')
+                            ->label('پیوست نامه (اختیاری)')
+                            ->helperText('PDF، Word یا تصویر — در صورت تمایل، نسخه چاپ‌شده و امضاشده نامه را بارگذاری کنید.')
+                            ->disk('public')
+                            ->directory('bid-suggestion-claims-decrease')
+                            ->preserveFilenames()
+                            ->acceptedFileTypes([
+                                'application/pdf',
+                                'application/msword',
+                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                'image/*',
+                            ])
+                            ->maxSize(20480) // 20 MB
+                            ->openable()
+                            ->downloadable()
+                            ->columnSpanFull(),
+                    ]),
+            ])
+            ->afterValidation(function (): void {
+                $this->saveDraft(notify: false);
+
+                if ($problem = $this->paymentProblem($this->suggestion())) {
+                    Notification::make()
+                        ->title('اطلاعات پرداخت کامل نیست')
+                        ->body($problem)
+                        ->danger()
+                        ->send();
+
+                    throw new Halt;
+                }
+            });
+    }
+
+    /**
+     * Step 3 — a price box against every good the tender asks for.
      */
     private function pricesStep(): Step
     {
@@ -399,7 +619,7 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 2 — free text plus up to ten supporting files.
+     * Step 4 — free text plus up to ten supporting files.
      */
     private function detailsStep(): Step
     {
@@ -434,33 +654,7 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 3 — proof of payment.
-     */
-    private function receiptStep(): Step
-    {
-        return Step::make('رسید پرداخت')
-            ->description('رسید پرداخت یا ضمانت‌نامه بانکی خود را بارگذاری کنید.')
-            ->icon(Heroicon::OutlinedBanknotes)
-            ->schema([
-                FileUpload::make('receipts')
-                    ->label('رسید پرداخت یا ضمانت‌نامه بانکی')
-                    ->helperText('PDF یا تصویر — حداکثر ۱۰ مگابایت برای هر فایل.')
-                    ->multiple()
-                    ->maxFiles(5)
-                    ->disk('public')
-                    ->directory('bid-suggestion-receipts')
-                    ->preserveFilenames()
-                    ->acceptedFileTypes(self::ACCEPTED_RECEIPT_TYPES)
-                    ->maxSize(10240) // 10 MB
-                    ->openable()
-                    ->downloadable()
-                    ->columnSpanFull(),
-            ])
-            ->afterValidation(fn () => $this->saveDraft(notify: false));
-    }
-
-    /**
-     * Step 4 — "we are about to text you". No fields at all.
+     * Step 5 — "we are about to text you". No fields at all.
      *
      * The SMS is sent by this step's afterValidation(), i.e. when «بعدی» is
      * pressed, for the same reason the registration wizard sends it there:
@@ -503,7 +697,7 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 5 — the code, and the submit button.
+     * Step 6 — the code, and the submit button.
      */
     private function otpStep(): Step
     {
@@ -620,10 +814,19 @@ class SubmitSuggestion extends Page
                 ])
                 ->all(),
             'note' => $suggestion->note,
+            'terms_accepted' => (bool) $suggestion->terms_accepted,
+            'payment_type' => $suggestion->payment_type?->value,
+            'claims_decrease_addressee' => $suggestion->claims_decrease_addressee,
+            'claims_decrease_tender_number' => $suggestion->claims_decrease_tender_number,
+            'claims_decrease_subject' => $suggestion->claims_decrease_subject,
             // FileUpload's multiple() state is a path => path map; the keys
             // are Filament's own bookkeeping and are regenerated on render.
             'documents' => $suggestion->documents()->pluck('path', 'path')->all(),
-            'receipts' => $suggestion->receipts()->pluck('path', 'path')->all(),
+            // Both of these are SINGLE-file uploads (no ->multiple()), so
+            // unlike 'documents' above their state is one bare path string,
+            // not a path => path map.
+            'bank_guarantee_file' => $suggestion->bankGuaranteeFile()->first()?->path,
+            'claims_decrease_attachment' => $suggestion->claimsDecreaseAttachment()->first()?->path,
         ];
     }
 
@@ -644,7 +847,20 @@ class SubmitSuggestion extends Page
         $state = $this->form->getState();
         $suggestion = $this->suggestion();
 
-        $suggestion->forceFill(['note' => $state['note'] ?? null])->save();
+        $suggestion->forceFill([
+            'note' => $state['note'] ?? null,
+            'terms_accepted' => (bool) ($state['terms_accepted'] ?? false),
+            'payment_type' => $state['payment_type'] ?? null,
+            'claims_decrease_addressee' => $state['claims_decrease_addressee'] ?? null,
+            'claims_decrease_tender_number' => $state['claims_decrease_tender_number'] ?? null,
+            'claims_decrease_subject' => $state['claims_decrease_subject'] ?? null,
+            // NEVER taken from the browser — this is the account's current
+            // display name, re-read from the database on every save, the
+            // same trust rule the price table's quantities follow. A user
+            // cannot make their own letter say a different company's name by
+            // crafting the request.
+            'claims_decrease_org_name' => $this->currentUser()->display_name,
+        ])->save();
 
         $this->syncItems((array) ($state['items'] ?? []));
 
@@ -655,8 +871,13 @@ class SubmitSuggestion extends Page
         );
         BidSuggestionAttachment::sync(
             $suggestion,
-            SuggestionAttachmentType::PaymentReceipt,
-            (array) ($state['receipts'] ?? []),
+            SuggestionAttachmentType::BankGuaranteeLetter,
+            (array) ($state['bank_guarantee_file'] ?? []),
+        );
+        BidSuggestionAttachment::sync(
+            $suggestion,
+            SuggestionAttachmentType::ClaimsDecreaseAttachment,
+            (array) ($state['claims_decrease_attachment'] ?? []),
         );
 
         $suggestion->recalculateTotal();
@@ -746,9 +967,12 @@ class SubmitSuggestion extends Page
     {
         $suggestion = $this->suggestion();
 
+        $paymentProblem = $this->paymentProblem($suggestion);
+
         $problem = match (true) {
+            ! $suggestion->terms_accepted => 'برای ادامه ابتدا باید شرایط مناقصه را بپذیرید (مرحله «شرایط مناقصه»).',
+            $paymentProblem !== null => $paymentProblem,
             (int) $suggestion->total_price <= 0 => 'برای حداقل یکی از کالاها قیمت وارد کنید (مرحله «قیمت کالاها»).',
-            $suggestion->receipts()->isEmpty() => 'بارگذاری رسید پرداخت یا ضمانت‌نامه بانکی الزامی است (مرحله «رسید پرداخت»).',
             default => null,
         };
 
@@ -763,6 +987,31 @@ class SubmitSuggestion extends Page
             ->send();
 
         throw new Halt;
+    }
+
+    /**
+     * What, if anything, is still missing from the «پرداخت» step — or null
+     * if it is complete for whichever method the user picked.
+     *
+     * A separate method (rather than inlining this into
+     * assertReadyToFinalize()) because paymentStep()'s own afterValidation()
+     * needs the identical check for its own, earlier feedback — see that
+     * step's docblock for why neither place may express this as ->required().
+     */
+    private function paymentProblem(BidSuggestion $suggestion): ?string
+    {
+        return match ($suggestion->payment_type) {
+            null => 'روش پرداخت ودیعه را انتخاب کنید (مرحله «پرداخت»).',
+            PaymentType::Electronic => null,
+            PaymentType::BankGuarantee => $suggestion->bankGuaranteeFile()->isEmpty()
+                ? 'بارگذاری ضمانت‌نامه بانکی الزامی است (مرحله «پرداخت»).'
+                : null,
+            PaymentType::ClaimsDecrease => (blank($suggestion->claims_decrease_addressee)
+                || blank($suggestion->claims_decrease_tender_number)
+                || blank($suggestion->claims_decrease_subject))
+                ? 'تکمیل فیلدهای نامه کسر از مطالبات الزامی است (مرحله «پرداخت»).'
+                : null,
+        };
     }
 
     /**
@@ -913,7 +1162,16 @@ class SubmitSuggestion extends Page
      * ---- Chrome -----------------------------------------------------------
      */
 
-    /** The «ذخیره پیش‌نویس» button, available from every step. */
+    /**
+     * The «ذخیره پیش‌نویس» and «حذف پیش‌نویس» buttons, available from every
+     * step.
+     *
+     * «حذف پیش‌نویس» needs no confirmation modal, unlike the مناقصات table's
+     * «انصراف از پیشنهاد» — that one throws away a SUBMITTED bid, which is
+     * why it asks twice. A draft was never submitted, so there is nothing
+     * here a moment's regret could not undo by simply opening the wizard
+     * again and starting over.
+     */
     protected function getHeaderActions(): array
     {
         return [
@@ -922,6 +1180,40 @@ class SubmitSuggestion extends Page
                 ->icon(Heroicon::OutlinedInboxArrowDown)
                 ->color('gray')
                 ->action(fn () => $this->saveDraft()),
+            Action::make('deleteDraft')
+                ->label('حذف پیش‌نویس')
+                ->icon(Heroicon::OutlinedTrash)
+                ->color('danger')
+                ->action(function (): void {
+                    $suggestion = $this->suggestion();
+
+                    /*
+                     * Re-checked here, not assumed from being on this page:
+                     * another tab could have finalised this exact bid since
+                     * this page loaded. purge() is a real, unconditional
+                     * delete — it must never be allowed to reach a bid that
+                     * is no longer a draft.
+                     */
+                    if (! $suggestion->isDraft()) {
+                        Notification::make()
+                            ->title('این پیشنهاد دیگر پیش‌نویس نیست و قابل حذف با این دکمه نمی‌باشد.')
+                            ->danger()
+                            ->send();
+
+                        $this->redirect(BidResource::getUrl('index'));
+
+                        return;
+                    }
+
+                    $suggestion->purge();
+
+                    Notification::make()
+                        ->title('پیش‌نویس پیشنهاد حذف شد.')
+                        ->success()
+                        ->send();
+
+                    $this->redirect(BidResource::getUrl('index'));
+                }),
         ];
     }
 

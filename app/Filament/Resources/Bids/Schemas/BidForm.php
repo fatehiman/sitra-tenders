@@ -81,6 +81,22 @@ class BidForm
                             ->required()
                             ->columnSpanFull(),
                         /*
+                         * ودیعه — the deposit a bidder must pay/guarantee
+                         * just to be ALLOWED to bid, unrelated to the price
+                         * they later quote for the goods. Same plain
+                         * TextInput pattern as every other money field in
+                         * this app (see the goods-requirement قیمت واحد box)
+                         * — no Filament "money" component is used anywhere.
+                         */
+                        TextInput::make('deposit_amount')
+                            ->label('مبلغ ودیعه (ریال)')
+                            ->required()
+                            ->numeric()
+                            ->integer()
+                            ->minValue(0)
+                            ->step(1)
+                            ->extraInputAttributes(['inputmode' => 'numeric']),
+                        /*
                          * Jalali (Shamsi) date-time pickers.
                          *
                          * The VALUE is still an ordinary Gregorian datetime —

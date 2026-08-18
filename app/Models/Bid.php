@@ -22,10 +22,16 @@ use Illuminate\Support\Facades\Auth;
  * with raw {!! !!}, which strips anything the editor itself cannot produce
  * (scripts, event handlers) — see ARCHITECTURE.md.
  *
+ * `deposit_amount` is the ودیعه (bid-guarantee deposit) admin sets when
+ * publishing the tender — the payment required just to be ALLOWED to bid,
+ * shown to the user at the top of the پیشنهاد wizard's «پرداخت» step. It has
+ * nothing to do with the price the bidder quotes for the goods themselves
+ * (that is `BidSuggestion::$total_price`).
+ *
  * Dates are stored as ordinary Gregorian datetimes; Jalali (Shamsi) is a
  * display-only conversion applied when rendering.
  */
-#[Fillable(['title', 'description', 'start_at', 'expire_at', 'created_by'])]
+#[Fillable(['title', 'description', 'deposit_amount', 'start_at', 'expire_at', 'created_by'])]
 class Bid extends Model
 {
     protected function casts(): array
@@ -35,6 +41,9 @@ class Bid extends Model
         return [
             'start_at' => 'datetime',
             'expire_at' => 'datetime',
+            // Whole ریال, same as every other money column in this app —
+            // see App\Models\BidSuggestion::$total_price.
+            'deposit_amount' => 'integer',
         ];
     }
 

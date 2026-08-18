@@ -440,7 +440,10 @@ columns by −3:30 instead.
 - `Bid` — title, `description` (HTML from Filament's `RichEditor`, which
   supports uploading and inserting images inline out of the box — no
   separate "upload then insert" step, satisfying the requirement directly),
-  `start_at`, `expire_at`, `created_by`.
+  `deposit_amount` (the ودیعه bid-guarantee deposit, in whole ریال — admin
+  sets it once per tender; shown at the top of the پیشنهاد wizard's «پرداخت»
+  step, and has nothing to do with the price a bidder later quotes for the
+  goods), `start_at`, `expire_at`, `created_by`.
 - `BidAttachment` — one row per uploaded file, `hasMany` on `Bid`. Filament's
   multi-file upload component accepts an explicit allow-list of extensions/
   mime types covering PDF, Word/Excel/PowerPoint (both legacy and OOXML),
@@ -470,17 +473,41 @@ columns by −3:30 instead.
 
 ## پیشنهاد (bid/offer) lifecycle
 
-A پیشنهاد is a **priced offer**, built up over a five-step wizard at
+A پیشنهاد is a **priced offer**, built up over a six-step wizard at
 `/bids/{record}/suggest`
 (`App\Filament\Resources\Bids\Pages\SubmitSuggestion`):
 
 | Step | Contents |
 |---|---|
-| 1 «قیمت کالاها» | every «کالای مورد نیاز» of the tender as a table row, with a ریال box for the unit price. The line total (price × requested quantity) and the grand total recompute on blur. An empty box means "I am not supplying this good" |
-| 2 «توضیحات و پیوست‌ها» | the free-text «متن پیشنهاد», plus up to **10** supporting files (same allow-list as a tender's own attachments) |
-| 3 «رسید پرداخت» | the رسید پرداخت / ضمانت‌نامه بانکی — PDF or image |
-| 4 «تایید نهایی» | no fields: it shows the account's mobile number and what is about to happen. Pressing «بعدی» is what SENDS the SMS |
-| 5 «کد تایید» | the 6-digit code; submitting finalises the bid and issues the 8-digit «کد پیگیری» |
+| 1 «شرایط مناقصه» | the tender's own description and attachments, exactly as the «مشاهده» eye icon on the مناقصات table shows them, plus a checkbox — «شرایط مناقصه را خواندم و موافق هستم» — that must be ticked before the user may continue |
+| 2 «پرداخت» | the ودیعه (`bids.deposit_amount`) is shown at the top, then one of three payment methods: **پرداخت الکترونیک** (a placeholder link — no real gateway exists yet, so choosing it does not block moving on), **بارگذاری ضمانت‌نامه بانکی** (a mandatory PDF/Word/image upload), or **نامه کسر از مطالبات** (a fill-in-the-blank version of the official letter text, with an optional attachment) |
+| 3 «قیمت کالاها» | every «کالای مورد نیاز» of the tender as a table row, with a ریال box for the unit price. The line total (price × requested quantity) and the grand total recompute on blur. An empty box means "I am not supplying this good" |
+| 4 «توضیحات و پیوست‌ها» | the free-text «متن پیشنهاد», plus up to **10** supporting files (same allow-list as a tender's own attachments) |
+| 5 «تایید نهایی» | no fields: it shows the account's mobile number and what is about to happen. Pressing «بعدی» is what SENDS the SMS |
+| 6 «کد تایید» | the 6-digit code; submitting finalises the bid and issues the 8-digit «کد پیگیری» |
+
+The «پرداخت» step's `claims_decrease_org_name` (the letter's «این
+شرکت/کارگاه/فروشگاه» blank) is the one field on this whole page that is
+**never taken from the browser at all** — every draft save overwrites it with
+`Auth::user()->display_name` directly, the same trust rule the price table's
+quantities follow (see "What is actually trusted" below). The other three
+`claims_decrease_*` fields are plain user-typed text.
+
+`SubmitSuggestion::paymentProblem()` is the single place that decides what,
+if anything, is still missing from step 2 for whichever `PaymentType` the
+user picked — called both from that step's own `afterValidation()` (so the
+user finds out immediately) and from `assertReadyToFinalize()` (the final
+gate before the SMS goes out and again at submit time). It intentionally
+does **not** live inline in `assertReadyToFinalize()`, because the earlier
+call site needs the identical check.
+
+«حذف پیش‌نویس», next to «ذخیره پیش‌نویس» in the header, deletes the draft row
+and its files outright (`BidSuggestion::purge()`) and returns to the
+مناقصات list — no confirmation modal, unlike «انصراف از پیشنهاد» on that
+table: a draft was never submitted, so there is nothing a moment's regret
+could not undo by opening the wizard again. It re-checks `isDraft()` itself
+before deleting, in case another tab finalised the same bid in the meantime —
+`purge()` is an unconditional delete and must never reach a submitted bid.
 
 **Prices are whole ریال, no decimal part** — an explicit product decision,
 so there is nothing to round. Money columns are `unsignedBigInteger`; a

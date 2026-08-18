@@ -91,6 +91,7 @@ delivery incidents get diagnosed from this table plus the provider's
 | `id` | bigint PK | |
 | `title` | string | |
 | `description` | longtext | HTML from Filament's RichEditor (inline image upload supported natively) |
+| `deposit_amount` | unsigned bigint, nullable | ودیعه — the bid-guarantee deposit admin sets for this tender, in whole ریال. Unrelated to the price a bidder later quotes for the goods (`bid_suggestions.total_price`); shown at the top of the پیشنهاد wizard's «پرداخت» step. Nullable because tenders published before this column existed have none |
 | `start_at` | datetime | |
 | `expire_at` | datetime | |
 | `created_by` | bigint FK → users.id | admin or staff who published it |
@@ -177,7 +178,7 @@ naming the tenders that use the good (see
 
 ## `bid_suggestions` (پیشنهادات)
 
-A user's priced offer on a tender, built up over the five-step wizard (see
+A user's priced offer on a tender, built up over the six-step wizard (see
 [ARCHITECTURE.md](ARCHITECTURE.md#پیشنهاد-bidoffer-lifecycle)). The row is
 created as a **draft** the moment the wizard is opened and is rewritten on
 every step; finalising it stamps `submitted_at` and `tracking_code`.
@@ -187,7 +188,13 @@ every step; finalising it stamps `submitted_at` and `tracking_code`.
 | `id` | bigint PK | |
 | `bid_id` | bigint FK → bids.id | |
 | `user_id` | bigint FK → users.id | |
-| `note` | text, nullable | «متن پیشنهاد» — step 2's free text |
+| `note` | text, nullable | «متن پیشنهاد» — step 4's free text |
+| `terms_accepted` | boolean, default false | did the user tick «شرایط مناقصه را خواندم و موافق هستم» on step 1? Not a timestamp — only whether, not when |
+| `payment_type` | varchar(20), nullable | `App\Enums\PaymentType`: `electronic`, `bank_guarantee` or `claims_decrease` — which ودیعه payment method step 2 recorded. A string, not a MySQL enum, for the same reason `status` below is one |
+| `claims_decrease_addressee` | varchar(255), nullable | the «نامه کسر از مطالبات» letter's «واحد محترم خرید» blank — free text the user types, only used when `payment_type = claims_decrease` |
+| `claims_decrease_tender_number` | varchar(255), nullable | the letter's «شماره مناقصه» blank — free text, not derived from `bids.id` |
+| `claims_decrease_subject` | varchar(255), nullable | the letter's «با موضوع» blank |
+| `claims_decrease_org_name` | varchar(255), nullable | the letter's «این شرکت/کارگاه/فروشگاه» blank. **Never taken from the browser** — the server overwrites it with the account's current `display_name` on every draft save (the same trust rule `bid_good_requirements.quantity` follows), so a crafted request cannot make the letter say a different name |
 | `total_price` | unsigned bigint, nullable | the bid price in **whole ریال**: the sum of `bid_suggestion_items.total_price`. Stored rather than summed on read because the tenders table and the «پیشنهادهای دریافتی» modal both show it per row. Only ever written by `BidSuggestion::recalculateTotal()`. `unsignedBigInteger`, not `integer`, because a signed int overflows at ~2.1 billion ریال — well inside the range of a real tender |
 | `tracking_code` | varchar(8), nullable, **unique** | the «کد پیگیری» shown to the user. Issued **only** at finalisation, so "has a code" and "was finalised" are the same question. Stored as a string: leading zeros are part of it |
 | `status` | varchar(20), indexed, default `submitted` | `App\Enums\SuggestionStatus`: `draft`, `submitted`, `form_a`, `form_b`, `approved`, `rejected`, `cancelled`. A string, not a MySQL ENUM, so adding a review step later is a code change |
@@ -246,7 +253,7 @@ upload-then-list pattern.
 |---|---|---|
 | `id` | bigint PK | |
 | `bid_suggestion_id` | bigint FK → bid_suggestions.id, cascade delete | |
-| `type` | varchar(20), indexed, default `document` | `App\Enums\SuggestionAttachmentType`: `document` (step 2's پیوست‌ها, max 10) or `payment_receipt` (step 3's رسید پرداخت / ضمانت‌نامه بانکی). One table rather than two because everything else about them is identical |
+| `type` | varchar(20), indexed, default `document` | `App\Enums\SuggestionAttachmentType`: `document` (step 4's پیوست‌ها, max 10), `bank_guarantee_letter` (step 2's ضمانت‌نامه بانکی upload, at most one) or `claims_decrease_attachment` (step 2's optional نامه کسر از مطالبات attachment, at most one). One table rather than three because everything else about them is identical |
 | `disk` | string | e.g. `public` |
 | `path` | string | storage path |
 | `original_name` | string | original upload filename |
@@ -255,8 +262,15 @@ upload-then-list pattern.
 | `created_at` | timestamp | |
 
 Allowed types differ by `type`: documents take the same list as
-`bid_attachments` (shared as `BidForm::ACCEPTED_ATTACHMENT_TYPES`), receipts
-take **PDF and images only**.
+`bid_attachments` (shared as `BidForm::ACCEPTED_ATTACHMENT_TYPES`); the
+bank-guarantee and claims-decrease attachments both take **PDF, Word, or
+images**.
+
+The `payment_receipt` case this table used to carry (step 3's old «رسید
+پرداخت») was renamed to `bank_guarantee_letter` by a data migration when that
+step was replaced by the current step 2 «پرداخت» — see
+`2026_08_18_090002_rename_payment_receipt_attachment_type.php`. Any bid
+finalised before that change keeps its file, just filed under the new type.
 
 Unlike the other two attachment tables, these rows are **reconciled**, not
 just appended: a draft is re-saved many times and the user can add and

@@ -49,17 +49,27 @@ This is the project's entry-point doc. See also:
    start/end in a modal) and a clipboard icon (its goods requirements, with
    نقشه download links).
 9. **پیشنهادها (bids/offers)** — a user submits **one per tender**, built in
-   a five-step wizard at `/bids/{id}/suggest`:
-   1. **قیمت کالاها** — every «کالای مورد نیاز» of the tender as a table
+   a six-step wizard at `/bids/{id}/suggest`:
+   1. **شرایط مناقصه** — the tender's title, description and attachments
+      (the same content the «مشاهده» eye icon on مناقصات shows), plus a
+      checkbox — «شرایط مناقصه را خواندم و موافق هستم» — that must be ticked
+      before continuing.
+   2. **پرداخت** — the tender's ودیعه (bid-guarantee deposit) amount is
+      shown at the top, then one of three payment methods: **پرداخت
+      الکترونیک** (a placeholder link today — no real gateway yet, so
+      picking it does not block moving on), **بارگذاری ضمانت‌نامه بانکی**
+      (a mandatory PDF/Word/image upload), or **نامه کسر از مطالبات** (a
+      fill-in-the-blank version of the official letter, with an optional
+      attachment).
+   3. **قیمت کالاها** — every «کالای مورد نیاز» of the tender as a table
       row, with a قیمت واحد box in **whole ریال**. The line total (price ×
       requested quantity) and the جمع کل at the bottom update as you leave
       each box. A good you leave empty is simply one you are not supplying.
-   2. **توضیحات و پیوست‌ها** — free text plus up to **10** files
+   4. **توضیحات و پیوست‌ها** — free text plus up to **10** files
       (PDF/Office/images/video/audio).
-   3. **رسید پرداخت** — the رسید پرداخت or ضمانت‌نامه بانکی (PDF or image).
-   4. **تایید نهایی** — your mobile number and what happens next; pressing
+   5. **تایید نهایی** — your mobile number and what happens next; pressing
       «بعدی» is what texts the code.
-   5. **کد تایید** — enter it, submit, and the bid is final. You get an
+   6. **کد تایید** — enter it, submit, and the bid is final. You get an
       8-digit **«کد پیگیری»**, also shown on the tender row and in
       «مشاهده پیشنهاد».
 
@@ -67,8 +77,10 @@ This is the project's entry-point doc. See also:
    - **every step saves a draft on the server** — prices, text and files
      all survive closing the browser. The row button reads «ادامه پیش‌نویس»
      when you have one, and there is a «ذخیره پیش‌نویس» button on every
-     step. A draft is not a bid: staff cannot see it and it does not lock
-     the tender;
+     step, next to a «حذف پیش‌نویس» button that discards the draft outright
+     (no confirmation — a draft was never submitted) and returns to
+     مناقصات. A draft is not a bid: staff cannot see it and it does not
+     lock the tender;
    - the tenders table shows the user their «ارسال پیشنهاد» date-time (a
      dash until they bid), «کد پیگیری», «مبلغ پیشنهاد» and «وضعیت پیشنهاد»:
      ارسال نشده → پیش‌نویس → ارسال شده → دردست بررسی once the tender

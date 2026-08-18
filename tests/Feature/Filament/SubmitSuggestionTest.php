@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Filament;
 
+use App\Enums\PaymentType;
 use App\Enums\PersonType;
 use App\Enums\RoleName;
 use App\Enums\SuggestionAttachmentType;
@@ -31,12 +32,16 @@ use Tests\TestCase;
  *                       call MERGES, so each step fills only its own.
  *   goToWizardStep($n)  press «بعدی» to reach step $n: validates step $n - 1
  *                       and runs its afterValidation() hook — which in this
- *                       wizard is where the draft is saved and, on step 4,
+ *                       wizard is where the draft is saved and, on step 5,
  *                       where the SMS goes out.
  *
  * Use goToWizardStep(), NOT goToNextWizardStep(): the wizard's current step
  * lives in Alpine in the browser, so the PHP component always rebuilds with
  * the index at 0 and "next" would re-run step 1 forever.
+ *
+ * Step numbers in this file match the CURRENT order:
+ *   1 شرایط مناقصه, 2 پرداخت, 3 قیمت کالاها, 4 توضیحات و پیوست‌ها,
+ *   5 تایید نهایی, 6 کد تایید.
  */
 class SubmitSuggestionTest extends TestCase
 {
@@ -68,6 +73,7 @@ class SubmitSuggestionTest extends TestCase
         $bid = Bid::create([
             'title' => 'مناقصه تست',
             'description' => 'x',
+            'deposit_amount' => 500_000,
             'start_at' => now()->subDay(),
             'expire_at' => $expireAt ?? now()->addDay(),
             'created_by' => $creator->id,
@@ -137,37 +143,53 @@ class SubmitSuggestionTest extends TestCase
 
         $component = Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()]);
 
-        // Step 1 — price the first good only.
+        // Step 1 — accept the terms.
         $component
-            ->fillForm(['items.'.$this->itemKey($component, $screws).'.unit_price' => 2000])
+            ->fillForm(['terms_accepted' => true])
             ->goToWizardStep(2)
             ->assertHasNoErrors();
 
-        // The draft exists already, and its total came from the DATABASE's
-        // quantity (10), not from anything the browser sent.
         $draft = BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->firstOrFail();
         $this->assertSame(SuggestionStatus::Draft, $draft->status);
+        $this->assertTrue($draft->terms_accepted);
+
+        // Step 2 — pay by bank guarantee.
+        $component
+            ->fillForm([
+                'payment_type' => PaymentType::BankGuarantee->value,
+                'bank_guarantee_file' => UploadedFile::fake()->create('guarantee.pdf', 20, 'application/pdf'),
+            ])
+            ->goToWizardStep(3)
+            ->assertHasNoErrors();
+
+        $draft = $draft->fresh();
+        $this->assertSame(PaymentType::BankGuarantee, $draft->payment_type);
+        $this->assertCount(1, $draft->bankGuaranteeFile());
+
+        // Step 3 — price the first good only.
+        $component
+            ->fillForm(['items.'.$this->itemKey($component, $screws).'.unit_price' => 2000])
+            ->goToWizardStep(4)
+            ->assertHasNoErrors();
+
+        // The total came from the DATABASE's quantity (10), not from
+        // anything the browser sent.
+        $draft = $draft->fresh();
         $this->assertSame(20000, $draft->total_price);
         $this->assertSame(1, $draft->items()->count());
 
-        // Step 2 — text and a supporting document.
+        // Step 4 — text and a supporting document.
         $component
             ->fillForm([
                 'note' => 'پیشنهاد ما',
                 'documents' => [UploadedFile::fake()->create('spec.pdf', 20, 'application/pdf')],
             ])
-            ->goToWizardStep(3)
+            ->goToWizardStep(5)
             ->assertHasNoErrors();
 
-        // Step 3 — the receipt.
-        $component
-            ->fillForm(['receipts' => [UploadedFile::fake()->create('receipt.pdf', 20, 'application/pdf')]])
-            ->goToWizardStep(4)
-            ->assertHasNoErrors();
-
-        // Step 4's «بعدی» is what spends money on an SMS — and it went to
+        // Step 5's «بعدی» is what spends money on an SMS — and it went to
         // the logged-in account's own number, not to anything on the form.
-        $component->goToWizardStep(5)->assertHasNoErrors();
+        $component->goToWizardStep(6)->assertHasNoErrors();
         $this->assertNotNull($sms->lastCode);
         $this->assertSame('09120000051', $sms->lastMobile);
 
@@ -184,11 +206,50 @@ class SubmitSuggestionTest extends TestCase
         $this->assertSame('پیشنهاد ما', $draft->note);
         $this->assertSame(20000, $draft->total_price);
         $this->assertCount(1, $draft->documents());
-        $this->assertCount(1, $draft->receipts());
+        $this->assertCount(1, $draft->bankGuaranteeFile());
 
         // The good the user left blank has no line at all — "not priced" is
         // the absence of a row, never a zero.
         $this->assertSame(0, $draft->items()->where('bid_good_requirement_id', $nuts->id)->count());
+    }
+
+    /**
+     * The claims-decrease letter path: free-text fields the user fills in,
+     * plus the org name — which is NEVER taken from the browser.
+     */
+    public function test_the_claims_decrease_letter_stores_a_server_side_org_name_snapshot(): void
+    {
+        $this->seed(RoleSeeder::class);
+        Storage::fake('public');
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000068', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000069', '0499370899');
+        $bid = $this->makeBidWithGoods($admin);
+
+        $this->actingAs($user);
+
+        Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()])
+            ->fillForm([
+                'payment_type' => PaymentType::ClaimsDecrease->value,
+                'claims_decrease_addressee' => 'واحد خرید شرکت الف',
+                'claims_decrease_tender_number' => '۱۲۳',
+                // Not a real field in the schema — a crafted attempt to set
+                // the org name straight from the browser.
+                'claims_decrease_org_name' => 'یک نام جعلی',
+                'claims_decrease_subject' => 'خرید پیچ و مهره',
+            ])
+            ->callAction('saveDraft');
+
+        $draft = BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->firstOrFail();
+
+        $this->assertSame(PaymentType::ClaimsDecrease, $draft->payment_type);
+        $this->assertSame('واحد خرید شرکت الف', $draft->claims_decrease_addressee);
+        $this->assertSame('۱۲۳', $draft->claims_decrease_tender_number);
+        $this->assertSame('خرید پیچ و مهره', $draft->claims_decrease_subject);
+        // The account's real display name, not the smuggled value.
+        $this->assertSame($user->fresh()->display_name, $draft->claims_decrease_org_name);
+        $this->assertNotSame('یک نام جعلی', $draft->claims_decrease_org_name);
     }
 
     /**
@@ -212,6 +273,8 @@ class SubmitSuggestionTest extends TestCase
 
         $component
             ->fillForm([
+                'terms_accepted' => true,
+                'payment_type' => PaymentType::Electronic->value,
                 'items.'.$this->itemKey($component, $screws).'.unit_price' => 750,
                 'note' => 'یادداشت پیش‌نویس',
             ])
@@ -222,6 +285,8 @@ class SubmitSuggestionTest extends TestCase
         $reopened = Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()]);
 
         $reopened->assertFormSet([
+            'terms_accepted' => true,
+            'payment_type' => PaymentType::Electronic->value,
             'items.'.$this->itemKey($reopened, $screws).'.unit_price' => 750,
             'note' => 'یادداشت پیش‌نویس',
         ]);
@@ -297,9 +362,71 @@ class SubmitSuggestionTest extends TestCase
     }
 
     /**
-     * No SMS is sent — and no bid is finalised — until the two mandatory
-     * pieces are actually there. Checking BEFORE the send matters: msgway
-     * bills per accepted message.
+     * The checkbox on step 1 has no ->required() rule (that would break every
+     * draft save — see the class docblock), so it is this step's own
+     * afterValidation() that must refuse to move on while it is unchecked.
+     */
+    public function test_the_terms_checkbox_must_be_ticked_to_leave_step_one(): void
+    {
+        $this->seed(RoleSeeder::class);
+        Storage::fake('public');
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000070', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000071', '0499370899');
+        $bid = $this->makeBidWithGoods($admin);
+
+        $this->actingAs($user);
+
+        // Wizard::nextStep() bumps its OWN bookkeeping of the current step
+        // before running afterValidation() — a Halt there only ever stops
+        // the browser-side Alpine component from actually flipping the
+        // visible step (see App\Filament\Resources\Bids\Pages\SubmitSuggestion's
+        // class docblock: "the wizard's current step lives in Alpine in the
+        // browser"). So what a Halt here can actually be tested against is
+        // what got PERSISTED — it must not be "accepted".
+        Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()])
+            ->goToWizardStep(2);
+
+        $draft = BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->firstOrFail();
+        $this->assertFalse($draft->terms_accepted);
+    }
+
+    /**
+     * Picking «بارگذاری ضمانت‌نامه بانکی» without actually uploading a file
+     * must not let the wizard move past the «پرداخت» step.
+     */
+    public function test_bank_guarantee_payment_requires_the_file_to_proceed(): void
+    {
+        $this->seed(RoleSeeder::class);
+        Storage::fake('public');
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000072', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000073', '0499370899');
+        $bid = $this->makeBidWithGoods($admin);
+
+        $this->actingAs($user);
+
+        Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()])
+            ->fillForm(['terms_accepted' => true])
+            ->goToWizardStep(2)
+            ->fillForm(['payment_type' => PaymentType::BankGuarantee->value])
+            ->goToWizardStep(3);
+
+        $draft = BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->firstOrFail();
+
+        // The choice itself is saved (every step saves a draft), but the
+        // Halt in paymentStep()->afterValidation() must have stopped short
+        // of anything treating the payment step as complete without a file.
+        $this->assertSame(PaymentType::BankGuarantee, $draft->payment_type);
+        $this->assertCount(0, $draft->bankGuaranteeFile());
+    }
+
+    /**
+     * No SMS is sent — and no bid is finalised — until every mandatory piece
+     * is actually there. Checking BEFORE the send matters: msgway bills per
+     * accepted message.
      */
     public function test_an_incomplete_bid_cannot_reach_the_sms_step(): void
     {
@@ -314,12 +441,15 @@ class SubmitSuggestionTest extends TestCase
 
         $this->actingAs($user);
 
-        // Priced, but no receipt uploaded.
+        // Terms accepted and priced, but no payment method chosen at all —
+        // the wizard must not get past step 2.
         $component = Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()]);
 
         $component
+            ->fillForm(['terms_accepted' => true])
+            ->goToWizardStep(2)
             ->fillForm(['items.'.$this->itemKey($component, $screws).'.unit_price' => 300])
-            ->goToWizardStep(5);
+            ->goToWizardStep(6);
 
         $this->assertNull($sms->lastCode);
 
@@ -334,7 +464,7 @@ class SubmitSuggestionTest extends TestCase
      * finalize() is reached through a plain wire:submit, which has none of
      * the Halt-catching wrappers Filament puts around actions and wizard
      * steps — so an uncaught Halt from the completeness check would be a
-     * 500 rather than a "you are missing a receipt" notice.
+     * 500 rather than a "you haven't accepted the terms" notice.
      */
     public function test_submitting_an_incomplete_bid_does_not_blow_up(): void
     {
@@ -348,7 +478,8 @@ class SubmitSuggestionTest extends TestCase
 
         $this->actingAs($user);
 
-        // Nothing priced, nothing uploaded, no code — straight to submit.
+        // Nothing accepted, nothing priced, nothing uploaded, no code —
+        // straight to submit.
         Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()])
             ->call('finalize')
             ->assertHasNoErrors();
@@ -398,10 +529,10 @@ class SubmitSuggestionTest extends TestCase
     }
 
     /**
-     * The uploaded files are real rows with their own type, so the two
-     * lists in the «مشاهده پیشنهاد» modal can be told apart.
+     * The uploaded files are real rows with their own type, so the lists in
+     * the «مشاهده پیشنهاد» modal can be told apart.
      */
-    public function test_documents_and_receipts_are_stored_with_distinct_types(): void
+    public function test_documents_and_the_bank_guarantee_file_are_stored_with_distinct_types(): void
     {
         $this->seed(RoleSeeder::class);
         Storage::fake('public');
@@ -415,14 +546,42 @@ class SubmitSuggestionTest extends TestCase
 
         Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()])
             ->fillForm([
+                'payment_type' => PaymentType::BankGuarantee->value,
                 'documents' => [UploadedFile::fake()->create('a.pdf', 10, 'application/pdf')],
-                'receipts' => [UploadedFile::fake()->create('b.pdf', 10, 'application/pdf')],
+                'bank_guarantee_file' => UploadedFile::fake()->create('b.pdf', 10, 'application/pdf'),
             ])
             ->callAction('saveDraft');
 
         $draft = BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->firstOrFail();
 
         $this->assertSame(1, $draft->attachments()->where('type', SuggestionAttachmentType::Document->value)->count());
-        $this->assertSame(1, $draft->attachments()->where('type', SuggestionAttachmentType::PaymentReceipt->value)->count());
+        $this->assertSame(1, $draft->attachments()->where('type', SuggestionAttachmentType::BankGuaranteeLetter->value)->count());
+    }
+
+    /**
+     * «حذف پیش‌نویس» needs no confirmation modal — a draft was never
+     * submitted, so nothing is lost that starting the wizard again would not
+     * already fix. It must also refuse to touch a bid that is no longer a
+     * draft, in case another tab finalised it in the meantime.
+     */
+    public function test_delete_draft_purges_the_row_and_its_files(): void
+    {
+        $this->seed(RoleSeeder::class);
+        Storage::fake('public');
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000074', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000075', '0499370899');
+        $bid = $this->makeBidWithGoods($admin);
+
+        $this->actingAs($user);
+
+        Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()])
+            ->fillForm(['note' => 'یادداشت'])
+            ->callAction('saveDraft')
+            ->callAction('deleteDraft')
+            ->assertRedirect();
+
+        $this->assertSame(0, BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->count());
     }
 }

@@ -133,10 +133,10 @@ class PageRendersTest extends TestCase
      * The «ارسال پیشنهاد» wizard, over real HTTP.
      *
      * This one earns its keep more than most: the page is a hand-registered
-     * resource route with its own Blade view and a five-step wizard built
-     * from a table repeater, an SMS step and two file uploads. Any of those
-     * being wired up wrongly is a 500 the Livewire::test() suite would not
-     * see, because that helper skips the route and the layout entirely.
+     * resource route with its own Blade view and a six-step wizard built
+     * from a table repeater, an SMS step and several file uploads. Any of
+     * those being wired up wrongly is a 500 the Livewire::test() suite would
+     * not see, because that helper skips the route and the layout entirely.
      */
     public function test_bid_suggestion_wizard_page_renders_for_a_user(): void
     {
@@ -159,6 +159,7 @@ class PageRendersTest extends TestCase
         $bid = Bid::create([
             'title' => 'مناقصه تست',
             'description' => '<p>شرح</p>',
+            'deposit_amount' => 100_000,
             'start_at' => now()->subDay(),
             'expire_at' => now()->addDay(),
             'created_by' => $admin->id,
@@ -170,10 +171,11 @@ class PageRendersTest extends TestCase
         $this->actingAs($bidder)
             ->get(BidResource::getUrl('suggest', ['record' => $bid]))
             ->assertSuccessful()
-            // The five step headings prove the Wizard itself rendered.
+            // The six step headings prove the Wizard itself rendered.
+            ->assertSee('شرایط مناقصه')
+            ->assertSee('پرداخت')
             ->assertSee('قیمت کالاها')
             ->assertSee('توضیحات و پیوست‌ها')
-            ->assertSee('رسید پرداخت')
             ->assertSee('تایید نهایی')
             ->assertSee('کد تایید')
             // The tender's goods reached the price table.

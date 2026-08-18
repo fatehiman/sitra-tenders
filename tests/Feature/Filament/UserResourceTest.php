@@ -170,7 +170,7 @@ class UserResourceTest extends TestCase
 
         Storage::disk('public')->put('bid-suggestions/receipt.pdf', 'x');
         $suggestion->attachments()->create([
-            'type' => SuggestionAttachmentType::PaymentReceipt,
+            'type' => SuggestionAttachmentType::BankGuaranteeLetter,
             'disk' => 'public',
             'path' => 'bid-suggestions/receipt.pdf',
             'original_name' => 'receipt.pdf',

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\PaymentType;
 use App\Enums\SuggestionAttachmentType;
 use App\Enums\SuggestionStatus;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -14,7 +15,7 @@ use Illuminate\Support\Facades\Storage;
 /**
  * A user's پیشنهاد (proposal/offer) on a tender.
  *
- * It is built up over a five-step wizard
+ * It is built up over a six-step wizard
  * (App\Filament\Resources\Bids\Pages\SubmitSuggestion), and lives in one of
  * two very different states:
  *
@@ -36,7 +37,12 @@ use Illuminate\Support\Facades\Storage;
  *     against editing/deleting — enforced in App\Policies\BidPolicy via
  *     Bid::isLocked(). Cancelling is the only way to unlock it.
  */
-#[Fillable(['bid_id', 'user_id', 'note', 'status', 'submitted_at'])]
+#[Fillable([
+    'bid_id', 'user_id', 'note', 'status', 'submitted_at',
+    'terms_accepted', 'payment_type',
+    'claims_decrease_addressee', 'claims_decrease_tender_number',
+    'claims_decrease_subject', 'claims_decrease_org_name',
+])]
 class BidSuggestion extends Model
 {
     // Rows are written by the methods below rather than by a generic
@@ -44,7 +50,7 @@ class BidSuggestion extends Model
     // that submitted_at/cancelled_at do not already carry.
     const UPDATED_AT = null;
 
-    /** How many supporting documents step 2 accepts. */
+    /** How many supporting documents the «توضیحات و پیوست‌ها» step accepts. */
     public const MAX_DOCUMENTS = 10;
 
     protected function casts(): array
@@ -57,6 +63,9 @@ class BidSuggestion extends Model
             'otp_verified_at' => 'datetime',
             'cancelled_at' => 'datetime',
             'total_price' => 'integer',
+            'terms_accepted' => 'boolean',
+            // Null until the user picks one on the «پرداخت» step.
+            'payment_type' => PaymentType::class,
         ];
     }
 
@@ -299,15 +308,21 @@ class BidSuggestion extends Model
      * ---- Reading the files ------------------------------------------------
      */
 
-    /** The step-2 supporting documents. */
+    /** The «توضیحات و پیوست‌ها» step's supporting documents. */
     public function documents()
     {
         return $this->attachments->where('type', SuggestionAttachmentType::Document);
     }
 
-    /** The step-3 رسید پرداخت / ضمانت‌نامه files. */
-    public function receipts()
+    /** The «پرداخت» step's ضمانت‌نامه بانکی upload — at most one file. */
+    public function bankGuaranteeFile()
     {
-        return $this->attachments->where('type', SuggestionAttachmentType::PaymentReceipt);
+        return $this->attachments->where('type', SuggestionAttachmentType::BankGuaranteeLetter);
+    }
+
+    /** The «پرداخت» step's optional نامه کسر از مطالبات attachment. */
+    public function claimsDecreaseAttachment()
+    {
+        return $this->attachments->where('type', SuggestionAttachmentType::ClaimsDecreaseAttachment);
     }
 }

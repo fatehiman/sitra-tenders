@@ -490,8 +490,13 @@ class BidsTable
                 // Same "state is the model, not a string" trick the tender's
                 // own attachment list uses, so each filename carries its own
                 // download URL.
+                TextEntry::make('my_payment_type')
+                    ->label('روش پرداخت ودیعه')
+                    ->placeholder('—')
+                    ->state(fn (Bid $record): ?string => self::liveSuggestion($record)?->payment_type?->getLabel()),
                 self::suggestionFilesEntry('my_documents', 'پیوست‌ها', SuggestionAttachmentType::Document),
-                self::suggestionFilesEntry('my_receipts', 'رسید پرداخت / ضمانت‌نامه بانکی', SuggestionAttachmentType::PaymentReceipt),
+                self::suggestionFilesEntry('my_bank_guarantee', 'ضمانت‌نامه بانکی', SuggestionAttachmentType::BankGuaranteeLetter),
+                self::suggestionFilesEntry('my_claims_decrease_attachment', 'پیوست نامه کسر از مطالبات', SuggestionAttachmentType::ClaimsDecreaseAttachment),
             ])
             ->modalSubmitAction(false)
             ->modalCancelActionLabel('بستن');
@@ -550,6 +555,7 @@ class BidsTable
                         TableColumn::make('تاریخ و ساعت ارسال'),
                         TableColumn::make('وضعیت'),
                         TableColumn::make('مبلغ کل (ریال)'),
+                        TableColumn::make('روش پرداخت ودیعه'),
                         TableColumn::make('متن پیشنهاد'),
                     ])
                     ->schema([
@@ -569,6 +575,10 @@ class BidsTable
                             ->hiddenLabel()
                             ->placeholder('—')
                             ->formatStateUsing(fn (?int $state): string => number_format((int) $state)),
+                        TextEntry::make('payment_type')
+                            ->hiddenLabel()
+                            ->placeholder('—')
+                            ->state(fn (BidSuggestion $record): ?string => $record->payment_type?->getLabel()),
                         TextEntry::make('note')->hiddenLabel()->placeholder('—'),
                     ]),
             ])
@@ -740,7 +750,7 @@ class BidsTable
                 && (bool) self::liveSuggestion($record)?->isWithdrawable())
             ->requiresConfirmation()
             ->modalHeading('انصراف از پیشنهاد')
-            ->modalDescription('پیشنهاد شما به‌طور کامل و برای همیشه حذف می‌شود؛ قیمت‌ها، پیوست‌ها و رسید پرداخت نیز پاک خواهند شد. پس از حذف می‌توانید تا پایان مهلت مناقصه پیشنهاد تازه‌ای ارسال کنید.')
+            ->modalDescription('پیشنهاد شما به‌طور کامل و برای همیشه حذف می‌شود؛ قیمت‌ها، پیوست‌ها و فایل‌های پرداخت ودیعه نیز پاک خواهند شد. پس از حذف می‌توانید تا پایان مهلت مناقصه پیشنهاد تازه‌ای ارسال کنید.')
             ->modalSubmitActionLabel('بله، حذف کن')
             ->action(function (Bid $record): void {
                 $suggestion = self::liveSuggestion($record);

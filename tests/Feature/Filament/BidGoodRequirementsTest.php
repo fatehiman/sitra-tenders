@@ -60,6 +60,7 @@ class BidGoodRequirementsTest extends TestCase
             ->fillForm([
                 'title' => 'مناقصه اتصالات',
                 'description' => '<p>شرح</p>',
+                'deposit_amount' => 1_000_000,
                 'start_at' => now()->subDay()->format('Y-m-d H:i:s'),
                 'expire_at' => now()->addDay()->format('Y-m-d H:i:s'),
                 'goodRequirements' => [
@@ -89,6 +90,7 @@ class BidGoodRequirementsTest extends TestCase
         $bid = Bid::create([
             'title' => 'مناقصه اتصالات',
             'description' => '<p>شرح</p>',
+            'deposit_amount' => 1_000_000,
             'start_at' => now()->subDay(),
             'expire_at' => now()->addDay(),
             'created_by' => $staff->id,

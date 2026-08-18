@@ -394,8 +394,15 @@ updated as work lands — it's the source of truth for "what's left."
       claims-decrease org-name trust rule, delete-draft, plus the existing
       happy-path/draft-restore/tamper-guard tests updated for the new step
       order); 63 passing
-- [ ] **Deploy to sitra.ir** — three new migrations (`deposit_amount`, the
-      new `bid_suggestions` columns, the attachment-type relabel)
+- [x] **Deployed to sitra.ir on 2026-08-18.** Three new migrations ran;
+      the attachment-type relabel first failed live —
+      `bid_suggestion_attachments.type` was `varchar(20)`, too narrow for
+      `bank_guarantee_letter`/`claims_decrease_attachment` — fixed by
+      widening the column to `varchar(30)` in the same migration, verified
+      against the two real `payment_receipt` rows already on the box (both
+      now `bank_guarantee_letter`), then `composer dump-autoload --optimize
+      --no-dev` (new `PaymentType` class) and `php artisan optimize`.
+      `/login` and `/` verified live, no new log entries after the fix
 
 ## Open items to revisit later (not blocking v1)
 

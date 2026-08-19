@@ -48,7 +48,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
- * «ارسال پیشنهاد» — the six-step wizard a user builds their bid in.
+ * «ارسال پیشنهاد» — the seven-step wizard a user builds their bid in.
  *
  * ---------------------------------------------------------------------------
  * Why this is a full page and not a modal
@@ -74,17 +74,26 @@ use Illuminate\Validation\ValidationException;
  *                          mandatory file), or نامه کسر از مطالبات (a
  *                          fill-in-the-blank letter, with an optional
  *                          attachment).
- *   3 «قیمت کالاها»      — every «کالای مورد نیاز» of the tender, one row
+ *   3 «مشخصات فنی کالاها» — the same goods table as the next step, but with
+ *                          one text box per good instead of a price: EMPTY
+ *                          means «مشخصات کارفرما را میپذیرم» (I accept the
+ *                          employer's technical specification), and anything
+ *                          typed there is the specification the bidder can
+ *                          actually supply instead. No prices, no totals —
+ *                          this step is only about specifications, which is
+ *                          also why the price step no longer repeats the
+ *                          employer's «ابعاد و مشخصات فنی» column.
+ *   4 «قیمت کالاها»      — every «کالای مورد نیاز» of the tender, one row
  *                          each, with a ریال box for the unit price. The line
  *                          total (price × requested quantity) and the grand
  *                          total update as soon as a box loses focus. Leaving
  *                          a box empty means "I am not supplying this good".
- *   4 «توضیحات و پیوست‌ها» — free text, plus up to ten supporting files.
- *   5 «تایید نهایی»      — shows the account's mobile number and explains
+ *   5 «توضیحات و پیوست‌ها» — free text, plus up to ten supporting files.
+ *   6 «تایید نهایی»      — shows the account's mobile number and explains
  *                          what happens next. Pressing «بعدی» is what sends
  *                          the SMS, so the code is only spent when the user
  *                          says they have the phone in hand.
- *   6 «کد تایید»         — type the code; submitting finalises the bid and
+ *   7 «کد تایید»         — type the code; submitting finalises the bid and
  *                          issues the 8-digit «کد پیگیری».
  *
  * ---------------------------------------------------------------------------
@@ -262,6 +271,7 @@ class SubmitSuggestion extends Page
                 Wizard::make([
                     $this->termsStep(),
                     $this->paymentStep(),
+                    $this->specificationsStep(),
                     $this->pricesStep(),
                     $this->detailsStep(),
                     $this->confirmStep(),
@@ -505,7 +515,85 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 3 — a price box against every good the tender asks for.
+     * Step 3 — «مشخصات فنی کالاها»: what the bidder can actually supply.
+     *
+     * Same fixed table as the price step, but the only editable cell is a text
+     * box headed «مشخصات فنی قابل تامین», next to the employer's own
+     * specification for that good.
+     *
+     * THE EMPTY BOX IS A REAL ANSWER, and the most common one: its placeholder
+     * reads «مشخصات کارفرما را میپذیرم», i.e. leaving it alone means "I accept
+     * the employer's specification for this good". Typing something means "I
+     * can supply it, but to THESE specifications instead". That is why nothing
+     * here is ->required(), why no row is stored for an empty box (see
+     * syncSpecifications()), and why the admin's پاکت الف screen can show a
+     * warning icon next to exactly the goods whose specification the bidder
+     * changed — a stored row IS the change.
+     *
+     * There is deliberately no «جمع» column and no total: this step is about
+     * specifications only. Money is the next step's business.
+     */
+    private function specificationsStep(): Step
+    {
+        return Step::make('مشخصات فنی کالاها')
+            ->description('اگر مشخصات فنی کارفرما را می‌پذیرید، خانه مربوطه را خالی بگذارید؛ در غیر این صورت مشخصاتی که می‌توانید تامین کنید را بنویسید.')
+            ->icon(Heroicon::OutlinedWrenchScrewdriver)
+            ->schema([
+                /*
+                 * Exactly the same "fixed grid, not a list the user builds"
+                 * repeater as the price step: adding, deleting and reordering
+                 * are all off, the rows come from the tender's requirements,
+                 * and the only editable cell is the last column. See
+                 * pricesStep() for the full explanation, including why each
+                 * row carries its own `requirement_id` field rather than
+                 * relying on the array key.
+                 */
+                Repeater::make('specs')
+                    ->hiddenLabel()
+                    ->addable(false)
+                    ->deletable(false)
+                    ->reorderable(false)
+                    ->table([
+                        TableColumn::make('کد کالا'),
+                        TableColumn::make('شرح کالا'),
+                        TableColumn::make('ابعاد و مشخصات فنی کارفرما'),
+                        TableColumn::make('تعداد'),
+                        TableColumn::make('مشخصات فنی قابل تامین'),
+                    ])
+                    ->schema([
+                        Hidden::make('requirement_id'),
+                        Placeholder::make('spec_good_code')
+                            ->hiddenLabel()
+                            ->content(fn (Get $get): string => $this->requirement($get('requirement_id'))?->good?->code ?? '—'),
+                        Placeholder::make('spec_good_name')
+                            ->hiddenLabel()
+                            ->content(fn (Get $get): string => $this->requirement($get('requirement_id'))?->good?->name ?? '—'),
+                        // The employer's wording, read from the database — the
+                        // thing the bidder is accepting or replacing.
+                        Placeholder::make('spec_employer')
+                            ->hiddenLabel()
+                            ->content(fn (Get $get): string => $this->requirement($get('requirement_id'))?->good?->specifications ?? '—'),
+                        Placeholder::make('spec_quantity')
+                            ->hiddenLabel()
+                            // number_format, not ->numeric(): Latin digits,
+                            // like every other number in the panel.
+                            ->content(fn (Get $get): string => number_format(
+                                $this->requirement($get('requirement_id'))?->quantity ?? 0
+                            )),
+                        Textarea::make('suppliable_specifications')
+                            ->hiddenLabel()
+                            ->rows(2)
+                            ->maxLength(1000)
+                            // The placeholder is the instruction: an untouched
+                            // box already says what leaving it untouched means.
+                            ->placeholder('مشخصات کارفرما را میپذیرم'),
+                    ]),
+            ])
+            ->afterValidation(fn () => $this->saveDraft(notify: false));
+    }
+
+    /**
+     * Step 4 — a price box against every good the tender asks for.
      */
     private function pricesStep(): Step
     {
@@ -532,7 +620,6 @@ class SubmitSuggestion extends Page
                     ->table([
                         TableColumn::make('کد کالا'),
                         TableColumn::make('شرح کالا'),
-                        TableColumn::make('ابعاد و مشخصات فنی'),
                         TableColumn::make('تعداد'),
                         TableColumn::make('قیمت واحد (ریال)'),
                         TableColumn::make('جمع (ریال)'),
@@ -565,9 +652,14 @@ class SubmitSuggestion extends Page
                         Placeholder::make('good_name')
                             ->hiddenLabel()
                             ->content(fn (Get $get): string => $this->requirement($get('requirement_id'))?->good?->name ?? '—'),
-                        Placeholder::make('specifications')
-                            ->hiddenLabel()
-                            ->content(fn (Get $get): string => $this->requirement($get('requirement_id'))?->good?->specifications ?? '—'),
+                        /*
+                         * The employer's own «ابعاد و مشخصات فنی» column used
+                         * to sit here. It moved to the «مشخصات فنی کالاها»
+                         * step, where the bidder either accepts it or offers
+                         * something else — repeating it here would ask the
+                         * same question twice and cost the width this table
+                         * needs for the two money columns.
+                         */
                         Placeholder::make('quantity')
                             ->hiddenLabel()
                             // number_format, not ->numeric(): the latter
@@ -619,7 +711,7 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 4 — free text plus up to ten supporting files.
+     * Step 5 — free text plus up to ten supporting files.
      */
     private function detailsStep(): Step
     {
@@ -654,7 +746,7 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 5 — "we are about to text you". No fields at all.
+     * Step 6 — "we are about to text you". No fields at all.
      *
      * The SMS is sent by this step's afterValidation(), i.e. when «بعدی» is
      * pressed, for the same reason the registration wizard sends it there:
@@ -697,7 +789,7 @@ class SubmitSuggestion extends Page
     }
 
     /**
-     * Step 6 — the code, and the submit button.
+     * Step 7 — the code, and the submit button.
      */
     private function otpStep(): Step
     {
@@ -803,6 +895,10 @@ class SubmitSuggestion extends Page
     {
         $suggestion = $this->suggestion();
         $prices = $suggestion->items()->pluck('unit_price', 'bid_good_requirement_id');
+        // Only the goods the bidder gave a DIFFERENT specification for have a
+        // row; every other box hydrates empty, which is the answer «مشخصات
+        // کارفرما را میپذیرم». See BidSuggestionSpecification.
+        $specs = $suggestion->specifications()->pluck('specifications', 'bid_good_requirement_id');
 
         return [
             'items' => $this->requirements()
@@ -810,6 +906,14 @@ class SubmitSuggestion extends Page
                     (string) $requirement->id => [
                         'requirement_id' => $requirement->id,
                         'unit_price' => $prices[$requirement->id] ?? null,
+                    ],
+                ])
+                ->all(),
+            'specs' => $this->requirements()
+                ->mapWithKeys(fn (BidGoodRequirement $requirement): array => [
+                    (string) $requirement->id => [
+                        'requirement_id' => $requirement->id,
+                        'suppliable_specifications' => $specs[$requirement->id] ?? null,
                     ],
                 ])
                 ->all(),
@@ -863,6 +967,7 @@ class SubmitSuggestion extends Page
         ])->save();
 
         $this->syncItems((array) ($state['items'] ?? []));
+        $this->syncSpecifications((array) ($state['specs'] ?? []));
 
         BidSuggestionAttachment::sync(
             $suggestion,
@@ -940,6 +1045,60 @@ class SubmitSuggestion extends Page
         $suggestion->items()
             ->whereNotIn('bid_good_requirement_id', $keptRequirementIds)
             ->delete();
+    }
+
+    /**
+     * Make the stored «مشخصات فنی قابل تامین» answers match the form exactly.
+     *
+     * Same three trust rules as syncItems(), for the same reasons — a row for
+     * a requirement that is not this tender's is ignored rather than rejected
+     * loudly, because the only way to produce one is to craft the request.
+     *
+     * The one rule specific to this step: AN EMPTY BOX WRITES NO ROW, and
+     * deletes one that was there before. An empty answer means "I accept the
+     * employer's specification", and storing that as an empty string would
+     * make "accepted" and "changed" indistinguishable for every reader —
+     * including the admin's پاکت الف screen, which shows a warning icon
+     * exactly when a row exists.
+     *
+     * @param  array<mixed>  $rows
+     */
+    private function syncSpecifications(array $rows): void
+    {
+        $suggestion = $this->suggestion();
+        $keptRequirementIds = [];
+
+        foreach ($rows as $row) {
+            $requirement = $this->requirement($row['requirement_id'] ?? null);
+
+            if (! $requirement) {
+                continue;
+            }
+
+            $text = trim((string) ($row['suppliable_specifications'] ?? ''));
+
+            if ($text === '') {
+                continue;
+            }
+
+            $suggestion->specifications()->updateOrCreate(
+                ['bid_good_requirement_id' => $requirement->id],
+                ['specifications' => $text],
+            );
+
+            $keptRequirementIds[] = $requirement->id;
+        }
+
+        // Anything the bidder cleared this time round — i.e. changed their
+        // mind and went back to accepting the employer's wording.
+        $suggestion->specifications()
+            ->whereNotIn('bid_good_requirement_id', $keptRequirementIds)
+            ->delete();
+
+        // The relation may already be loaded from an earlier read in this same
+        // request (buildFormState does read it), and a stale loaded collection
+        // would make the page render the OLD answers back at the user.
+        $suggestion->unsetRelation('specifications');
     }
 
     /*
@@ -1097,7 +1256,7 @@ class SubmitSuggestion extends Page
      * indistinguishable from a bug to the person staring at it, and msgway's
      * messages are already Persian and readable.
      *
-     * $notify picks where the outcome is shown. The step-4 «بعدی» must BLOCK
+     * $notify picks where the outcome is shown. The step-6 «بعدی» must BLOCK
      * by throwing (advancing to a step that asks for a code which will never
      * arrive would be worse than useless); the «ارسال مجدد کد» link is a
      * standalone button and reports through a notification instead.

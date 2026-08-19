@@ -41,10 +41,26 @@ separate public site to protect a `/admin` prefix from.
   is to bounce you to the item directly below it is a rung that goes
   nowhere — but the route itself still has to exist, because that is where
   Filament sends people after logging in.
+- `/password-reset/request` — **«فراموشی رمز عبور»**, a three-step
+  mobile+OTP wizard (`App\Filament\Auth\ForgotPassword`). Filament's own
+  password reset emails a signed link and this app has no email column at
+  all, so the page replaces that flow entirely while keeping everything
+  Filament gives an auth page. Wiring it up with `->passwordReset(...)` is
+  also what makes Filament render the "forgot password?" link under the
+  login form. See [Password reset](#password-reset-فراموشی-رمز-عبور).
 - `/bids/{record}/suggest` — the user's **«ارسال پیشنهاد» wizard**. A
   resource page rather than a `routes/web.php` route, so it inherits the
   panel's auth middleware, layout and breadcrumbs; see
   [پیشنهاد lifecycle](#پیشنهاد-bidoffer-lifecycle).
+- `/bids/{record}/envelope/{stage}` — the admin's **«بازکردن پاکت الف/ب»**
+  review, where `{stage}` is `a` or `b` (`App\Enums\EnvelopeStage`). Also a
+  resource page, for the same reasons; see
+  [The two-envelope admin review](#the-two-envelope-admin-review-پاکت-الف--پاکت-ب).
+- **Two names for the app.** `APP_NAME` is the full title — «سامانه
+  الکترونیکی مدیریت استعلام پیشنهادات تامین کنندگان» — which Filament uses
+  for the browser tab and the login/register headings. `->brandName()` is the
+  short «سامانه مدیریت استعلام», because the sidebar is 250px wide and the
+  full title would wrap onto three lines there.
 - **تغییر رمز عبور** — the change-password page, available to all three
   roles. `$navigationSort = 99` pins it to the BOTTOM of the sidebar: the
   three resources use 1/2/3, and a page that leaves the sort null is treated
@@ -473,7 +489,7 @@ columns by −3:30 instead.
 
 ## پیشنهاد (bid/offer) lifecycle
 
-A پیشنهاد is a **priced offer**, built up over a six-step wizard at
+A پیشنهاد is a **priced offer**, built up over a seven-step wizard at
 `/bids/{record}/suggest`
 (`App\Filament\Resources\Bids\Pages\SubmitSuggestion`):
 
@@ -481,10 +497,21 @@ A پیشنهاد is a **priced offer**, built up over a six-step wizard at
 |---|---|
 | 1 «شرایط مناقصه» | the tender's own description and attachments, exactly as the «مشاهده» eye icon on the مناقصات table shows them, plus a checkbox — «شرایط مناقصه را خواندم و موافق هستم» — that must be ticked before the user may continue |
 | 2 «پرداخت» | the ودیعه (`bids.deposit_amount`) is shown at the top, then one of three payment methods: **پرداخت الکترونیک** (a placeholder link — no real gateway exists yet, so choosing it does not block moving on), **بارگذاری ضمانت‌نامه بانکی** (a mandatory PDF/Word/image upload), or **نامه کسر از مطالبات** (a fill-in-the-blank version of the official letter text, with an optional attachment) |
-| 3 «قیمت کالاها» | every «کالای مورد نیاز» of the tender as a table row, with a ریال box for the unit price. The line total (price × requested quantity) and the grand total recompute on blur. An empty box means "I am not supplying this good" |
-| 4 «توضیحات و پیوست‌ها» | the free-text «متن پیشنهاد», plus up to **10** supporting files (same allow-list as a tender's own attachments) |
-| 5 «تایید نهایی» | no fields: it shows the account's mobile number and what is about to happen. Pressing «بعدی» is what SENDS the SMS |
-| 6 «کد تایید» | the 6-digit code; submitting finalises the bid and issues the 8-digit «کد پیگیری» |
+| 3 «مشخصات فنی کالاها» | the same goods table as the next step, but with a text box per good headed «مشخصات فنی قابل تامین» instead of a price. **An empty box is the normal answer** — its placeholder reads «مشخصات کارفرما را میپذیرم», i.e. "I accept the employer's technical specification for this good"; anything typed is the specification the bidder can supply instead. No «جمع» column and no total: this step is about specifications only |
+| 4 «قیمت کالاها» | every «کالای مورد نیاز» of the tender as a table row, with a ریال box for the unit price. The line total (price × requested quantity) and the grand total recompute on blur. An empty box means "I am not supplying this good". It no longer repeats the employer's «ابعاد و مشخصات فنی» column — step 3 is where that question is asked and answered |
+| 5 «توضیحات و پیوست‌ها» | the free-text «متن پیشنهاد», plus up to **10** supporting files (same allow-list as a tender's own attachments) |
+| 6 «تایید نهایی» | no fields: it shows the account's mobile number and what is about to happen. Pressing «بعدی» is what SENDS the SMS |
+| 7 «کد تایید» | the 6-digit code; submitting finalises the bid and issues the 8-digit «کد پیگیری» |
+
+**«مشخصات فنی قابل تامین» is stored as an absence, not a flag.** A row in
+`bid_suggestion_specifications` exists only for the goods whose specification
+the bidder CHANGED; accepting the employer's wording writes nothing (and
+clearing the box deletes the row again). So "did this bidder change good X?"
+is "does a row exist", which is exactly the question the admin's پاکت الف
+screen asks when it decides whether to add the ⚠ icon beside a specification.
+It is a table of its own rather than a column on `bid_suggestion_items`
+because an items row means "priced" — see
+[DATABASE.md](DATABASE.md#bid_suggestion_specifications).
 
 The «پرداخت» step's `claims_decrease_org_name` (the letter's «این
 شرکت/کارگاه/فروشگاه» blank) is the one field on this whole page that is
@@ -571,10 +598,11 @@ Both are easy to reintroduce, so they are pinned by tests:
 
 - `App\Enums\SuggestionStatus` holds it: `draft` → `submitted` → `form_a` →
   `form_b` → `approved`, with `rejected` reachable from any step and
-  `cancelled` sitting outside it. **`form_a`/`form_b`/`approved`/`rejected`
-  are TODO cases — nothing sets them yet**, by design: the admin review
-  screens are future work, and the enum documents the target shape so the
-  status column does not have to be redesigned when they arrive.
+  `cancelled` sitting outside it. All of them are now written by the
+  two-envelope admin review: `form_a` when پاکت الف is finalised with the
+  offer approved, `form_b` when پاکت ب is opened, `approved`/`rejected` when
+  پاکت ب is finalised (`Bid::finalizeEnvelope()`,
+  `Bid::markEnvelopeBInProgress()`).
 - `SuggestionStatus::inactiveValues()` derives the query-scope filter from
   `isActive()` rather than hand-listing it, so a future case cannot be
   classified in one place and forgotten in the other.
@@ -631,6 +659,112 @@ it fires no model events, so there is nowhere else this could live. The
 row-action re-checks `isWithdrawable()` inside `->action()` and not only in
 `->visible()`: the row was rendered at some point in the past, and the
 deadline can have passed since.
+
+## The two-envelope admin review (پاکت الف / پاکت ب)
+
+Once a tender has EXPIRED, an admin opens its offers in two stages, the way a
+paper tender is opened. Both stages live on one page —
+`App\Filament\Resources\Bids\Pages\OpenEnvelope`, at
+`/bids/{record}/envelope/{a|b}` — reached from the letter icon on the مناقصات
+table.
+
+| | پاکت الف (technical) | پاکت ب (financial) |
+|---|---|---|
+| Which offers | every live offer | only those approved in الف |
+| Shows | goods, «مشخصات فنی قابل تامین» (⚠ icon where the bidder changed the employer's wording), «توضیحات و پیوست‌ها», payment method + ودیعه details | the same, **plus** unit prices, line totals and «جمع کل» |
+| Prices | **not on the page at all** | shown |
+| On finalise | approved → «فرم الف»; declined → «رد شده» | approved → «تایید شده» (winner); declined → «رد شده»; **every** bidder is texted |
+
+The flow on each screen is one offer at a time: green «تایید» / red «رد»
+records the verdict and advances; «قبلی»/«بعدی» move freely so a verdict can
+be revisited; after the last offer comes a review list, and «ثبت نهایی»
+(behind an "I understand this cannot be undone" checkbox in its own
+confirmation modal) is what commits the stage.
+
+### Drafts, and the one irreversible moment
+
+Two different facts, two different places — see the envelope migration:
+
+- `bid_suggestions.envelope_a_decision` / `envelope_b_decision` — one admin
+  verdict on one offer, written the instant the button is clicked so a review
+  of thirty offers survives the browser closing, and overwritable as often as
+  the admin changes their mind. **Nothing reads these columns** until:
+- `bids.envelope_a_submitted_at` / `envelope_b_submitted_at` — the stamp that
+  turns the drafts into outcomes. `Bid::finalizeEnvelope()` writes the
+  statuses and the stamp **inside one transaction**, because a half-finalised
+  envelope would be reviewable again with some bidders already told the result.
+
+`submit()` refuses while any offer is undecided: finalising with a blank
+verdict would silently reject that bidder.
+
+### Anonymity is the point
+
+`BidSuggestion::bidderNameForAdmin()` is the single rule: an admin sees
+«مخفی شده» wherever a bidder's name, company name or mobile number would
+appear — the «پیشنهادهای دریافتی» modal, the «لغو» checkbox list (offers are
+identified there by «کد پیگیری» + submission time instead) and both envelope
+screens. It returns the real name only for a WINNER of a finalised tender.
+
+Two consequences worth keeping:
+
+- the «پیشنهادهای دریافتی» modal **hides «مبلغ کل» until پاکت الف is
+  finalised**. The two-envelope process only means something if the technical
+  judgement is made without the amounts in view, and that modal would
+  otherwise have shown every total next to every offer;
+- «تخته برندگان» — the open-letter icon that replaces the two closed-letter
+  ones once ب is finalised — is the ONE screen where identities appear:
+  winners with name, company name, mobile, کد ملی / شناسه ملی, «کد پیگیری» and
+  amount. Non-winners stay anonymous forever; they are simply not on it.
+
+Admins only, deliberately not staff: staff publish tenders, they do not settle
+them. `Bid::envelopeIsOpenable()` and the page's own `guard()` re-check that
+(and "الف before ب", and "not already finalised") on every write, so hiding a
+button is a courtesy and not the boundary.
+
+### The result SMS
+
+`App\Services\SuggestionResultNotifier`, called AFTER the finalise
+transaction commits, sends one message per bidder using the two
+panel-registered msgway templates in `config/sms.php`:
+
+- `bid_won` (23572) — to each winner;
+- `bid_declined` (23573) — to **every other live bidder on the tender**,
+  including the ones rejected back in پاکت الف. They were told nothing at
+  that point on purpose: until ب is finalised the tender has no result, and
+  one message per bidder is kinder (and cheaper) than two.
+
+Both take the same two positional parameters: the bidder's own name + family
+(not `display_name` — the templates greet a human), then the tender title.
+Every failure is swallowed into the log and `sent_sms_log` rather than thrown:
+a provider outage must not roll back an irreversible review the admin has just
+confirmed.
+
+## Password reset (فراموشی رمز عبور)
+
+`App\Filament\Auth\ForgotPassword` — three steps: mobile number → 6-digit
+SMS code → new password twice, then the person is logged straight in and
+landed on مناقصات.
+
+It EXTENDS Filament's `RequestPasswordReset` (auth layout, RTL, rate limiter,
+"back to login" link all come free) but replaces its email-link flow
+completely, because there is no email column to mail a link to. The panel
+registers the same class for both password-reset routes; the second one
+(`/password-reset/reset`, Filament's signed-link landing page) is never
+linked here, and pointing it at the wizard means anyone who reaches it by
+hand gets a working screen instead of Filament's email-only page.
+
+What is actually trusted is `OtpService::verifiedWithin()` — a verified,
+in-window row for exactly the submitted number, read from the database — not
+the wizard's own idea of which step it is on. There is a test that fills the
+form in as if steps 1 and 2 had been passed and calls submit directly; the
+password does not change.
+
+Step 1 does say «کاربری با این شماره موبایل یافت نشد» for an unknown number,
+which lets someone check whether a number is registered here. That is a
+deliberate, narrow trade: the registration form already answers the same
+question, hiding it would protect nothing while making a stuck user wait for
+an SMS that is never coming, and it stops the app paying for a message to a
+number with no account.
 
 ## کالاها (Goods) module
 
@@ -791,6 +925,23 @@ before touching anything:
   deploy command through `sudo -u sitra`** so nothing lands root-owned;
   after any file operation, `find $APP -not -user sitra -print -quit`
   should print nothing.
+
+### Upload speed: measured, and NOT the app (2026-08-19)
+
+Uploads into the panel felt slow, so this was measured rather than guessed:
+a 3 MB HTTP POST from the dev machine to `sitra.ir` transferred at **~1.72
+MB/s**, while the same 3 MB to an unrelated public endpoint
+(`speed.cloudflare.com`) managed **~1.35 MB/s** on the same connection. The
+server is therefore *faster* than the general internet baseline from that
+client — the ceiling is the client's own upstream bandwidth (~14 Mbit/s),
+not the app and not the VPS.
+
+Nothing in the request path adds work either: Livewire writes the uploaded
+file straight to the local disk, there is no image processing, no re-encoding
+and no antivirus hook, and the PHP limits were already raised via
+`public/.user.ini` (`upload_max_filesize=60M`, `post_max_size=64M`). So there
+is deliberately **no app-side change for this** — re-measure the client's
+uplink before reopening it.
 
 ### Deploy pitfalls (both hit for real)
 

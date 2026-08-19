@@ -32,7 +32,7 @@ use Tests\TestCase;
  *                       call MERGES, so each step fills only its own.
  *   goToWizardStep($n)  press «بعدی» to reach step $n: validates step $n - 1
  *                       and runs its afterValidation() hook — which in this
- *                       wizard is where the draft is saved and, on step 5,
+ *                       wizard is where the draft is saved and, on step 6,
  *                       where the SMS goes out.
  *
  * Use goToWizardStep(), NOT goToNextWizardStep(): the wizard's current step
@@ -40,8 +40,8 @@ use Tests\TestCase;
  * the index at 0 and "next" would re-run step 1 forever.
  *
  * Step numbers in this file match the CURRENT order:
- *   1 شرایط مناقصه, 2 پرداخت, 3 قیمت کالاها, 4 توضیحات و پیوست‌ها,
- *   5 تایید نهایی, 6 کد تایید.
+ *   1 شرایط مناقصه, 2 پرداخت, 3 مشخصات فنی کالاها, 4 قیمت کالاها,
+ *   5 توضیحات و پیوست‌ها, 6 تایید نهایی, 7 کد تایید.
  */
 class SubmitSuggestionTest extends TestCase
 {
@@ -115,6 +115,24 @@ class SubmitSuggestionTest extends TestCase
         $this->fail("No repeater row found for requirement {$requirement->id}.");
     }
 
+    /**
+     * The «مشخصات فنی کالاها» repeater key of the row for a given requirement.
+     *
+     * Same problem and same solution as itemKey() above — Filament re-keys
+     * repeater items on hydration, so a row has to be found by its own
+     * `requirement_id` field.
+     */
+    private function specKey(Testable $component, BidGoodRequirement $requirement): string
+    {
+        foreach ((array) $component->get('data.specs') as $key => $row) {
+            if ((int) ($row['requirement_id'] ?? 0) === $requirement->id) {
+                return (string) $key;
+            }
+        }
+
+        $this->fail("No specifications row found for requirement {$requirement->id}.");
+    }
+
     private function fakeSms(): FakeSmsGateway
     {
         $fake = new FakeSmsGateway;
@@ -166,10 +184,29 @@ class SubmitSuggestionTest extends TestCase
         $this->assertSame(PaymentType::BankGuarantee, $draft->payment_type);
         $this->assertCount(1, $draft->bankGuaranteeFile());
 
-        // Step 3 — price the first good only.
+        // Step 3 — accept the employer's specification for one good (empty
+        // box) and offer a different one for the other.
+        $component
+            ->fillForm([
+                'specs.'.$this->specKey($component, $nuts).'.suppliable_specifications' => 'مهره M10 گالوانیزه',
+            ])
+            ->goToWizardStep(4)
+            ->assertHasNoErrors();
+
+        // Only the good whose box was typed in has a row: an empty box means
+        // «مشخصات کارفرما را میپذیرم» and stores nothing at all.
+        $draft = $draft->fresh();
+        $this->assertSame(1, $draft->specifications()->count());
+        $this->assertSame(
+            'مهره M10 گالوانیزه',
+            $draft->specifications()->where('bid_good_requirement_id', $nuts->id)->value('specifications'),
+        );
+        $this->assertSame(0, $draft->specifications()->where('bid_good_requirement_id', $screws->id)->count());
+
+        // Step 4 — price the first good only.
         $component
             ->fillForm(['items.'.$this->itemKey($component, $screws).'.unit_price' => 2000])
-            ->goToWizardStep(4)
+            ->goToWizardStep(5)
             ->assertHasNoErrors();
 
         // The total came from the DATABASE's quantity (10), not from
@@ -178,18 +215,18 @@ class SubmitSuggestionTest extends TestCase
         $this->assertSame(20000, $draft->total_price);
         $this->assertSame(1, $draft->items()->count());
 
-        // Step 4 — text and a supporting document.
+        // Step 5 — text and a supporting document.
         $component
             ->fillForm([
                 'note' => 'پیشنهاد ما',
                 'documents' => [UploadedFile::fake()->create('spec.pdf', 20, 'application/pdf')],
             ])
-            ->goToWizardStep(5)
+            ->goToWizardStep(6)
             ->assertHasNoErrors();
 
-        // Step 5's «بعدی» is what spends money on an SMS — and it went to
+        // Step 6's «بعدی» is what spends money on an SMS — and it went to
         // the logged-in account's own number, not to anything on the form.
-        $component->goToWizardStep(6)->assertHasNoErrors();
+        $component->goToWizardStep(7)->assertHasNoErrors();
         $this->assertNotNull($sms->lastCode);
         $this->assertSame('09120000051', $sms->lastMobile);
 
@@ -211,6 +248,43 @@ class SubmitSuggestionTest extends TestCase
         // The good the user left blank has no line at all — "not priced" is
         // the absence of a row, never a zero.
         $this->assertSame(0, $draft->items()->where('bid_good_requirement_id', $nuts->id)->count());
+    }
+
+    /**
+     * Clearing a «مشخصات فنی قابل تامین» box means going back to accepting the
+     * employer's specification — so the stored row has to disappear, not become
+     * an empty string. "Changed" and "accepted" are the presence and absence of
+     * a row everywhere downstream (the admin's پاکت الف icon reads exactly
+     * that), so an empty row would show as a change that was never made.
+     */
+    public function test_clearing_a_supplied_specification_removes_the_stored_row(): void
+    {
+        $this->seed(RoleSeeder::class);
+        Storage::fake('public');
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000078', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000079', '0499370899');
+        $bid = $this->makeBidWithGoods($admin);
+        [$screws] = $this->requirements($bid);
+
+        $this->actingAs($user);
+
+        $component = Livewire::test(SubmitSuggestion::class, ['record' => $bid->getKey()]);
+
+        $component
+            ->fillForm(['specs.'.$this->specKey($component, $screws).'.suppliable_specifications' => 'پیچ آلن استیل'])
+            ->callAction('saveDraft');
+
+        $draft = BidSuggestion::where('bid_id', $bid->id)->where('user_id', $user->id)->firstOrFail();
+        $this->assertSame(1, $draft->specifications()->count());
+
+        // Blank the box again — and a whitespace-only value counts as blank.
+        $component
+            ->fillForm(['specs.'.$this->specKey($component, $screws).'.suppliable_specifications' => '   '])
+            ->callAction('saveDraft');
+
+        $this->assertSame(0, $draft->fresh()->specifications()->count());
     }
 
     /**
@@ -276,6 +350,7 @@ class SubmitSuggestionTest extends TestCase
                 'terms_accepted' => true,
                 'payment_type' => PaymentType::Electronic->value,
                 'items.'.$this->itemKey($component, $screws).'.unit_price' => 750,
+                'specs.'.$this->specKey($component, $screws).'.suppliable_specifications' => 'پیچ آلن استیل',
                 'note' => 'یادداشت پیش‌نویس',
             ])
             // The header button, rather than a step transition — both go
@@ -288,6 +363,7 @@ class SubmitSuggestionTest extends TestCase
             'terms_accepted' => true,
             'payment_type' => PaymentType::Electronic->value,
             'items.'.$this->itemKey($reopened, $screws).'.unit_price' => 750,
+            'specs.'.$this->specKey($reopened, $screws).'.suppliable_specifications' => 'پیچ آلن استیل',
             'note' => 'یادداشت پیش‌نویس',
         ]);
     }
@@ -449,7 +525,7 @@ class SubmitSuggestionTest extends TestCase
             ->fillForm(['terms_accepted' => true])
             ->goToWizardStep(2)
             ->fillForm(['items.'.$this->itemKey($component, $screws).'.unit_price' => 300])
-            ->goToWizardStep(6);
+            ->goToWizardStep(7);
 
         $this->assertNull($sms->lastCode);
 

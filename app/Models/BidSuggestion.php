@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\EnvelopeDecision;
+use App\Enums\EnvelopeStage;
 use App\Enums\PaymentType;
 use App\Enums\SuggestionAttachmentType;
 use App\Enums\SuggestionStatus;
@@ -53,6 +55,12 @@ class BidSuggestion extends Model
     /** How many supporting documents the «توضیحات و پیوست‌ها» step accepts. */
     public const MAX_DOCUMENTS = 10;
 
+    /**
+     * What an admin sees instead of a bidder's name before that bidder has
+     * won — see bidderNameForAdmin().
+     */
+    public const MASKED_BIDDER_NAME = 'مخفی شده';
+
     protected function casts(): array
     {
         return [
@@ -66,6 +74,11 @@ class BidSuggestion extends Model
             'terms_accepted' => 'boolean',
             // Null until the user picks one on the «پرداخت» step.
             'payment_type' => PaymentType::class,
+            // The admin's per-envelope verdicts. Null = not decided yet, and
+            // a decision is only a DRAFT until the tender's matching
+            // `envelope_?_submitted_at` is stamped — see App\Enums\EnvelopeDecision.
+            'envelope_a_decision' => EnvelopeDecision::class,
+            'envelope_b_decision' => EnvelopeDecision::class,
         ];
     }
 
@@ -95,6 +108,19 @@ class BidSuggestion extends Model
     public function attachments(): HasMany
     {
         return $this->hasMany(BidSuggestionAttachment::class);
+    }
+
+    /**
+     * The «مشخصات فنی قابل تامین» answers — one row per good the bidder
+     * offered a DIFFERENT technical specification for.
+     *
+     * A good the bidder is happy to supply exactly as specified has no row
+     * here at all (see BidSuggestionSpecification and its migration), so this
+     * relation is usually much shorter than the tender's goods list.
+     */
+    public function specifications(): HasMany
+    {
+        return $this->hasMany(BidSuggestionSpecification::class);
     }
 
     /**
@@ -184,6 +210,12 @@ class BidSuggestion extends Model
             'cancelled_at' => null,
             'cancelled_by' => null,
             'cancel_reason' => null,
+            // A re-used row can carry verdicts from the offer that was
+            // cancelled. They belong to that offer, not to this new one, so
+            // they are cleared here — otherwise a fresh bid would arrive at
+            // the admin's envelope screens pre-decided.
+            'envelope_a_decision' => null,
+            'envelope_b_decision' => null,
         ])->save();
 
         return $suggestion;
@@ -244,6 +276,86 @@ class BidSuggestion extends Model
         } while (static::where('tracking_code', $code)->exists());
 
         return $code;
+    }
+
+    /*
+     * ---- The admin's two-envelope review ----------------------------------
+     */
+
+    /**
+     * The bidder's alternative specification for one of the tender's goods,
+     * or null if they accepted the employer's wording for it.
+     *
+     * Takes a `bid_good_requirements` id. Reads the LOADED collection rather
+     * than querying, because both screens that ask this (the admin's پاکت الف
+     * page and «مشاهده پیشنهاد») ask it once per good — a query per row would
+     * be the classic N+1.
+     */
+    public function suppliableSpecificationFor(int $requirementId): ?string
+    {
+        return $this->specifications
+            ->firstWhere('bid_good_requirement_id', $requirementId)
+            ?->specifications;
+    }
+
+    /** This suggestion's verdict in one envelope, or null if undecided. */
+    public function decisionFor(EnvelopeStage $stage): ?EnvelopeDecision
+    {
+        return $this->{$stage->decisionColumn()};
+    }
+
+    /**
+     * Record (or change) the admin's verdict on this offer for one envelope.
+     *
+     * Written to the database immediately — deliberately. It is still only a
+     * draft, because nothing reads these columns until the tender's envelope
+     * is finalised, and an admin reviewing thirty offers must be able to
+     * close the browser and come back without losing the first twenty-nine.
+     */
+    public function recordDecision(EnvelopeStage $stage, EnvelopeDecision $decision): void
+    {
+        $this->forceFill([$stage->decisionColumn() => $decision])->save();
+    }
+
+    /** Did this offer get through the technical envelope (پاکت الف)? */
+    public function passedEnvelopeA(): bool
+    {
+        return $this->envelope_a_decision === EnvelopeDecision::Approved;
+    }
+
+    /**
+     * Did this bidder WIN the tender?
+     *
+     * Both halves are required: an approval in پاکت ب only counts once that
+     * envelope has been finalised (`bids.envelope_b_submitted_at`), because
+     * until then it is a draft the admin can still change. This is also the
+     * one condition that unmasks the bidder's identity for the admin — see
+     * bidderNameForAdmin().
+     */
+    public function isWinner(): bool
+    {
+        return $this->envelope_b_decision === EnvelopeDecision::Approved
+            && $this->bid?->envelope_b_submitted_at !== null;
+    }
+
+    /**
+     * The name an ADMIN is allowed to see for this bidder.
+     *
+     * The requirement is explicit: while a tender is being reviewed, whoever
+     * is reviewing it must not be able to tell whose offer they are reading —
+     * so every screen an admin sees a suggestion on shows «مخفی شده» instead
+     * of the name, company name or mobile number. Only the WINNERS are
+     * unmasked, once پاکت ب has been finalised.
+     *
+     * Admins can of course still manage accounts in «کاربران»; what is hidden
+     * is the LINK between an account and an offer, which is the thing that
+     * would let a review be biased.
+     */
+    public function bidderNameForAdmin(): string
+    {
+        return $this->isWinner()
+            ? ($this->user?->display_name ?? self::MASKED_BIDDER_NAME)
+            : self::MASKED_BIDDER_NAME;
     }
 
     /*

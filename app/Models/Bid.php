@@ -2,13 +2,18 @@
 
 namespace App\Models;
 
+use App\Enums\EnvelopeDecision;
+use App\Enums\EnvelopeStage;
+use App\Enums\SuggestionStatus;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 /**
  * A مناقصه (tender/bid) — the central object of the whole app.
@@ -44,6 +49,11 @@ class Bid extends Model
             // Whole ریال, same as every other money column in this app —
             // see App\Models\BidSuggestion::$total_price.
             'deposit_amount' => 'integer',
+            // When the admin finalised each review envelope. Null means "not
+            // finalised yet" — see App\Enums\EnvelopeStage and the envelope
+            // methods at the bottom of this class.
+            'envelope_a_submitted_at' => 'datetime',
+            'envelope_b_submitted_at' => 'datetime',
         ];
     }
 
@@ -165,5 +175,164 @@ class Bid extends Model
         }
 
         return $this->activeSuggestions()->exists();
+    }
+
+    /*
+     * ---- The admin's two-envelope review ----------------------------------
+     */
+
+    /**
+     * Has the admin finalised this envelope for this tender?
+     *
+     * "Finalised" is the irreversible step: the per-offer verdicts stop being
+     * drafts and become the bidders' real statuses. Everything else about the
+     * review — which offers are approved so far, how far through the list the
+     * admin got — is answered by the suggestions themselves.
+     */
+    public function envelopeIsSubmitted(EnvelopeStage $stage): bool
+    {
+        return $this->{$stage->submittedAtColumn()} !== null;
+    }
+
+    /**
+     * May the admin open this envelope right now?
+     *
+     * The rules, in order:
+     *   - the tender must have EXPIRED. Reviewing offers while more can still
+     *     arrive would be reviewing half a field;
+     *   - it must carry at least one live offer, or there is nothing to open;
+     *   - this envelope must not already be finalised — finalising cannot be
+     *     undone;
+     *   - پاکت ب additionally requires پاکت الف to be finalised first: ب only
+     *     ever shows the offers that got through الف.
+     */
+    public function envelopeIsOpenable(EnvelopeStage $stage): bool
+    {
+        if (! $this->expire_at->isPast() || $this->activeSuggestions->isEmpty()) {
+            return false;
+        }
+
+        if ($this->envelopeIsSubmitted($stage)) {
+            return false;
+        }
+
+        return $stage === EnvelopeStage::A
+            ? true
+            : $this->envelopeIsSubmitted(EnvelopeStage::A);
+    }
+
+    /** Both envelopes finalised — the tender is over and the winners are known. */
+    public function reviewIsFinished(): bool
+    {
+        return $this->envelopeIsSubmitted(EnvelopeStage::B);
+    }
+
+    /**
+     * The offers the admin reviews in one envelope, in a stable order.
+     *
+     * پاکت الف is every live offer. پاکت ب is only those approved in الف —
+     * the whole point of the two-envelope process is that the offers rejected
+     * on technical grounds never have their prices read at all.
+     *
+     * Ordered by id (i.e. by the order the drafts were started) rather than
+     * by amount or name: any order derived from the CONTENT of the offers
+     * would nudge the reviewer, and one derived from the bidder would defeat
+     * the anonymity the whole review is built around.
+     *
+     * @return Collection<int, BidSuggestion>
+     */
+    public function envelopeSuggestions(EnvelopeStage $stage)
+    {
+        $query = $this->activeSuggestions()
+            ->with(['items.requirement.good', 'specifications', 'attachments', 'user'])
+            ->orderBy('id');
+
+        if ($stage === EnvelopeStage::B) {
+            $query->where('envelope_a_decision', EnvelopeDecision::Approved->value);
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * Turn one envelope's draft verdicts into the bidders' real statuses, and
+     * stamp the tender so it can never be done again.
+     *
+     * پاکت الف: approved offers move to «فرم الف» (through to the financial
+     *           envelope), declined ones to «رد شده».
+     * پاکت ب:   approved offers move to «تایید شده» — those bidders have won —
+     *           and declined ones to «رد شده».
+     *
+     * Everything happens inside one transaction: a half-finalised envelope
+     * (some statuses written, the tender not stamped) would be reviewable
+     * again with some of its bidders already told the outcome.
+     *
+     * The SMS messages are NOT sent from here on purpose — see
+     * App\Services\SuggestionResultNotifier and the caller
+     * (App\Filament\Resources\Bids\Pages\OpenEnvelope::submit()): a texting
+     * failure must never roll back a decision that has already been made.
+     *
+     * @return Collection<int, BidSuggestion> the
+     *                                        offers this call decided, for the caller to notify
+     */
+    public function finalizeEnvelope(EnvelopeStage $stage)
+    {
+        $suggestions = $this->envelopeSuggestions($stage);
+
+        DB::transaction(function () use ($stage, $suggestions): void {
+            foreach ($suggestions as $suggestion) {
+                $approved = $suggestion->decisionFor($stage) === EnvelopeDecision::Approved;
+
+                $suggestion->forceFill([
+                    'status' => match (true) {
+                        $stage === EnvelopeStage::A && $approved => SuggestionStatus::FormA,
+                        $stage === EnvelopeStage::B && $approved => SuggestionStatus::Approved,
+                        default => SuggestionStatus::Rejected,
+                    },
+                ])->save();
+            }
+
+            $this->forceFill([$stage->submittedAtColumn() => now()])->save();
+        });
+
+        return $suggestions;
+    }
+
+    /**
+     * Move the offers that got through پاکت الف to «فرم ب» — i.e. "the
+     * financial envelope is being read now".
+     *
+     * Called when the admin OPENS پاکت ب, not when they submit it. It writes
+     * no verdict, only the step the offer is at, which is what the bidder's
+     * «وضعیت» column shows them. Without this the status ladder would jump
+     * from «فرم الف» straight to «تایید شده»/«رد شده» and the «فرم ب» rung
+     * would never be used.
+     */
+    public function markEnvelopeBInProgress(): void
+    {
+        $this->activeSuggestions()
+            ->where('envelope_a_decision', EnvelopeDecision::Approved->value)
+            ->where('status', SuggestionStatus::FormA->value)
+            ->update(['status' => SuggestionStatus::FormB->value]);
+    }
+
+    /**
+     * The bidders who won, once پاکت ب is finalised — an empty collection
+     * before that, because an approval in an unfinalised envelope is still a
+     * draft the admin can change (see BidSuggestion::isWinner()).
+     *
+     * @return Collection<int, BidSuggestion>
+     */
+    public function winners()
+    {
+        if (! $this->reviewIsFinished()) {
+            return $this->suggestions()->whereRaw('1 = 0')->get();
+        }
+
+        return $this->activeSuggestions()
+            ->where('envelope_b_decision', EnvelopeDecision::Approved->value)
+            ->with(['user', 'items.requirement.good'])
+            ->orderBy('id')
+            ->get();
     }
 }

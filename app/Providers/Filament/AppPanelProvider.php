@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Auth\ForgotPassword;
 use App\Filament\Auth\Login;
 use App\Filament\Auth\Register;
 use Filament\FontProviders\LocalFontProvider;
@@ -58,6 +59,38 @@ class AppPanelProvider extends PanelProvider
              * The three-step OTP wizard lives in App\Filament\Auth\Register.
              */
             ->registration(Register::class)
+            /*
+             * «رمز عبور خود را فراموش کرده‌اید؟» on the login page.
+             *
+             * Filament's own password reset is an email-link flow, and this
+             * app has no email column at all — so BOTH route actions point
+             * at our own App\Filament\Auth\ForgotPassword, a three-step
+             * mobile+OTP wizard that resets the password and logs the person
+             * straight in. The second argument is the `/password-reset/reset`
+             * route, which in Filament's flow is the page a signed email link
+             * lands on: nothing ever links to it here, and pointing it at the
+             * same wizard means somebody who reaches it by hand gets a
+             * working screen instead of Filament's email-only page (which
+             * would fail on this schema).
+             *
+             * Calling ->passwordReset() is also what makes Filament render
+             * the "forgot password" link under the login form's password
+             * field — see Filament\Auth\Pages\Login::getPasswordFormComponent().
+             */
+            ->passwordReset(ForgotPassword::class, ForgotPassword::class)
+            /*
+             * Two different names for two different places.
+             *
+             * APP_NAME (.env) is the full legal title — «سامانه الکترونیکی
+             * مدیریت استعلام پیشنهادات تامین کنندگان» — and Filament uses it
+             * for the browser tab title and the login/register page heading,
+             * where there is room for 55 characters.
+             *
+             * ->brandName() is the sidebar/topbar brand, which is 250px wide
+             * (see ->sidebarWidth() below): the full title would wrap onto
+             * three lines there, so the brand is the short form.
+             */
+            ->brandName('سامانه مدیریت استعلام')
             ->colors([
                 'primary' => Color::Amber,
             ])

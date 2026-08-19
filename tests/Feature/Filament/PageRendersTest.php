@@ -8,6 +8,7 @@ use App\Filament\Resources\Bids\BidResource;
 use App\Filament\Resources\Goods\GoodResource;
 use App\Filament\Resources\Users\UserResource;
 use App\Models\Bid;
+use App\Models\BidSuggestion;
 use App\Models\Good;
 use App\Models\User;
 use Database\Seeders\RoleSeeder;
@@ -133,7 +134,7 @@ class PageRendersTest extends TestCase
      * The «ارسال پیشنهاد» wizard, over real HTTP.
      *
      * This one earns its keep more than most: the page is a hand-registered
-     * resource route with its own Blade view and a six-step wizard built
+     * resource route with its own Blade view and a seven-step wizard built
      * from a table repeater, an SMS step and several file uploads. Any of
      * those being wired up wrongly is a 500 the Livewire::test() suite would
      * not see, because that helper skips the route and the layout entirely.
@@ -171,9 +172,11 @@ class PageRendersTest extends TestCase
         $this->actingAs($bidder)
             ->get(BidResource::getUrl('suggest', ['record' => $bid]))
             ->assertSuccessful()
-            // The six step headings prove the Wizard itself rendered.
+            // The seven step headings prove the Wizard itself rendered.
             ->assertSee('شرایط مناقصه')
             ->assertSee('پرداخت')
+            ->assertSee('مشخصات فنی کالاها')
+            ->assertSee('مشخصات فنی قابل تامین')
             ->assertSee('قیمت کالاها')
             ->assertSee('توضیحات و پیوست‌ها')
             ->assertSee('تایید نهایی')
@@ -186,7 +189,15 @@ class PageRendersTest extends TestCase
             ->assertSee('requestNextStep()', escape: false);
     }
 
-    /** The three list pages, each of which now renders a Jalali column. */
+    /**
+     * The three list pages, each of which now renders a Jalali column.
+     *
+     * The مناقصات row deliberately carries a finalised offer on an EXPIRED
+     * tender, because that is the row state that renders the most row actions:
+     * the lock icon, «لغو», and the «بازکردن پاکت الف» letter icon. Every one
+     * of those is a closure evaluated per row, so a mistake in any of them is
+     * only visible once a row actually exists.
+     */
     public function test_list_pages_render_for_an_admin(): void
     {
         $this->seed(RoleSeeder::class);
@@ -198,9 +209,33 @@ class PageRendersTest extends TestCase
             'specifications' => 'M8',
         ]);
 
+        $bidder = User::create([
+            'first_name' => 'پیشنهاد',
+            'last_name' => 'دهنده',
+            'mobile' => '09121110003',
+            'national_id' => '0084575948',
+            'person_type' => PersonType::Individual,
+            'password' => Hash::make('Secret123'),
+            'mobile_verified_at' => now(),
+            'is_active' => true,
+        ]);
+        $bidder->assignRole(RoleName::User->value);
+
+        $expired = Bid::create([
+            'title' => 'مناقصه پایان‌یافته',
+            'description' => '<p>شرح</p>',
+            'deposit_amount' => 100_000,
+            'start_at' => now()->subDays(5),
+            'expire_at' => now()->subDay(),
+            'created_by' => $admin->id,
+        ]);
+        BidSuggestion::startDraft($expired, $bidder)->finalize();
+
         $this->actingAs($admin)
             ->get(BidResource::getUrl('index'))
-            ->assertSuccessful();
+            ->assertSuccessful()
+            // The letter icon's tooltip: پاکت الف is openable on this row.
+            ->assertSee('بازکردن پاکت الف');
 
         $this->actingAs($admin)
             ->get(GoodResource::getUrl('index'))
@@ -209,5 +244,91 @@ class PageRendersTest extends TestCase
         $this->actingAs($admin)
             ->get(UserResource::getUrl('index'))
             ->assertSuccessful();
+    }
+
+    /** The «فراموشی رمز عبور» wizard renders for a guest, and login links to it. */
+    public function test_forgot_password_page_renders_and_login_links_to_it(): void
+    {
+        $this->seed(RoleSeeder::class);
+
+        $this->get(filament()->getRequestPasswordResetUrl())
+            ->assertSuccessful()
+            // The three step headings prove the Wizard itself rendered.
+            ->assertSee('شماره موبایل')
+            ->assertSee('کد تایید')
+            ->assertSee('رمز عبور جدید')
+            // Same Enter-key guard as the other two wizards.
+            ->assertSee('requestNextStep()', escape: false);
+
+        // Filament renders the link under the login form's password field, but
+        // only because the panel calls ->passwordReset(...) — this pins that.
+        $this->get(filament()->getLoginUrl())
+            ->assertSuccessful()
+            ->assertSee(filament()->getRequestPasswordResetUrl(), escape: false);
+    }
+
+    /**
+     * The «بازکردن پاکت الف» review page, over real HTTP.
+     *
+     * Worth a render test for the same reason the bid wizard is: it is a
+     * hand-registered resource route with an extra {stage} segment, and its
+     * whole screen is built from infolist entries and schema actions inside
+     * content() — a Blade-level mistake there is a 500 the Livewire::test()
+     * suite would not see.
+     */
+    public function test_envelope_page_renders_for_an_admin_without_showing_prices(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $admin = $this->makeUser(RoleName::Admin);
+
+        $bidder = User::create([
+            'first_name' => 'پیشنهاد',
+            'last_name' => 'دهنده',
+            'mobile' => '09121110002',
+            'national_id' => '0084575948',
+            'person_type' => PersonType::Individual,
+            'password' => Hash::make('Secret123'),
+            'mobile_verified_at' => now(),
+            'is_active' => true,
+        ]);
+        $bidder->assignRole(RoleName::User->value);
+
+        // An EXPIRED tender — an envelope cannot be opened before the deadline.
+        $bid = Bid::create([
+            'title' => 'مناقصه پایان‌یافته',
+            'description' => '<p>شرح</p>',
+            'deposit_amount' => 100_000,
+            'start_at' => now()->subDays(5),
+            'expire_at' => now()->subDay(),
+            'created_by' => $admin->id,
+        ]);
+
+        $good = Good::create(['code' => 'G-11', 'name' => 'پیچ آلن', 'specifications' => 'M8']);
+        $requirement = $bid->goodRequirements()->create(['good_id' => $good->id, 'quantity' => 4]);
+
+        $suggestion = BidSuggestion::startDraft($bid, $bidder);
+        $suggestion->items()->create([
+            'bid_good_requirement_id' => $requirement->id,
+            // A distinctive number, so the price assertion below cannot pass by
+            // accident on some other figure on the page.
+            'unit_price' => 987654,
+            'total_price' => 987654 * 4,
+        ]);
+        $suggestion->recalculateTotal();
+        $suggestion->finalize();
+
+        $this->actingAs($admin)
+            ->get(BidResource::getUrl('envelope', ['record' => $bid, 'stage' => 'a']))
+            ->assertSuccessful()
+            ->assertSee('پیشنهاد 1 از 1')
+            // The bidder is never named during the review.
+            ->assertSee(BidSuggestion::MASKED_BIDDER_NAME)
+            ->assertDontSee($bidder->display_name)
+            // The whole point of پاکت الف: no amounts anywhere on the page.
+            ->assertDontSee(number_format(987654))
+            ->assertDontSee(number_format(987654 * 4))
+            // The goods, and the specification column, are there.
+            ->assertSee('پیچ آلن')
+            ->assertSee('مشخصات فنی قابل تامین');
     }
 }

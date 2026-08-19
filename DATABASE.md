@@ -94,6 +94,8 @@ delivery incidents get diagnosed from this table plus the provider's
 | `deposit_amount` | unsigned bigint, nullable | ودیعه — the bid-guarantee deposit admin sets for this tender, in whole ریال. Unrelated to the price a bidder later quotes for the goods (`bid_suggestions.total_price`); shown at the top of the پیشنهاد wizard's «پرداخت» step. Nullable because tenders published before this column existed have none |
 | `start_at` | datetime | |
 | `expire_at` | datetime | |
+| `envelope_a_submitted_at` | timestamp, nullable | when an admin pressed the irreversible «ثبت نهایی پاکت الف». Null = the technical envelope has not been finalised. This one column is what the letter icon on the مناقصات table reads to pick its colour and tooltip |
+| `envelope_b_submitted_at` | timestamp, nullable | the same for «پاکت ب» — and therefore "this tender is finished and its winners are known" (`Bid::reviewIsFinished()`) |
 | `created_by` | bigint FK → users.id | admin or staff who published it |
 | `created_at` / `updated_at` | timestamp | |
 
@@ -178,7 +180,7 @@ naming the tenders that use the good (see
 
 ## `bid_suggestions` (پیشنهادات)
 
-A user's priced offer on a tender, built up over the six-step wizard (see
+A user's priced offer on a tender, built up over the seven-step wizard (see
 [ARCHITECTURE.md](ARCHITECTURE.md#پیشنهاد-bidoffer-lifecycle)). The row is
 created as a **draft** the moment the wizard is opened and is rewritten on
 every step; finalising it stamps `submitted_at` and `tracking_code`.
@@ -197,7 +199,9 @@ every step; finalising it stamps `submitted_at` and `tracking_code`.
 | `claims_decrease_org_name` | varchar(255), nullable | the letter's «این شرکت/کارگاه/فروشگاه» blank. **Never taken from the browser** — the server overwrites it with the account's current `display_name` on every draft save (the same trust rule `bid_good_requirements.quantity` follows), so a crafted request cannot make the letter say a different name |
 | `total_price` | unsigned bigint, nullable | the bid price in **whole ریال**: the sum of `bid_suggestion_items.total_price`. Stored rather than summed on read because the tenders table and the «پیشنهادهای دریافتی» modal both show it per row. Only ever written by `BidSuggestion::recalculateTotal()`. `unsignedBigInteger`, not `integer`, because a signed int overflows at ~2.1 billion ریال — well inside the range of a real tender |
 | `tracking_code` | varchar(8), nullable, **unique** | the «کد پیگیری» shown to the user. Issued **only** at finalisation, so "has a code" and "was finalised" are the same question. Stored as a string: leading zeros are part of it |
-| `status` | varchar(20), indexed, default `submitted` | `App\Enums\SuggestionStatus`: `draft`, `submitted`, `form_a`, `form_b`, `approved`, `rejected`, `cancelled`. A string, not a MySQL ENUM, so adding a review step later is a code change |
+| `envelope_a_decision` | varchar(20), nullable | `App\Enums\EnvelopeDecision`: `approved` / `declined` — the admin's verdict on this offer in پاکت الف, or null for "not decided yet". Written the instant the button is clicked, but **read by nothing** until `bids.envelope_a_submitted_at` is stamped: until then it is a draft the admin can change |
+| `envelope_b_decision` | varchar(20), nullable | the same for پاکت ب. `approved` here **plus** a stamped `bids.envelope_b_submitted_at` is the definition of a winner (`BidSuggestion::isWinner()`), which is also the only condition that unmasks the bidder's identity for an admin |
+| `status` | varchar(20), indexed, default `submitted` | `App\Enums\SuggestionStatus`: `draft`, `submitted`, `form_a`, `form_b`, `approved`, `rejected`, `cancelled`. A string, not a MySQL ENUM, so adding a review step later is a code change. Everything from `form_a` on is written by the two-envelope review, never by the bidder |
 | `submitted_at` | timestamp, nullable | when the user finalised — **not** `created_at`, because the row exists as a draft first and is reused if a cancelled bid is re-sent |
 | `otp_verified_at` | timestamp, nullable | when the SMS challenge that finalised this bid was passed. Audit only — the challenge itself is checked against `otp_verifications` at submit time |
 | `cancelled_at` | timestamp, nullable | set by the admin's «لغو» action |
@@ -242,6 +246,35 @@ Unique constraint on `(bid_suggestion_id, bid_good_requirement_id)`.
 **A good the user does not want to supply has NO ROW** — not a zero and not
 a null price. "Priced" and "not priced" is the presence or absence of a row,
 the same "absence is the state" idea «ارسال نشده» uses above.
+
+### `bid_suggestion_specifications`
+
+One answer from the wizard's «مشخصات فنی کالاها» step: "for this good, I can
+supply THESE specifications instead".
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `bid_suggestion_id` | bigint FK → bid_suggestions.id, cascade delete | |
+| `bid_good_requirement_id` | bigint FK → bid_good_requirements.id, **cascade** delete | points at the tender's requirement, not at the good — same reasoning as `bid_suggestion_items` above |
+| `specifications` | text | the bidder's own wording. Never null or empty: an empty answer is stored as the absence of the row |
+| `created_at` / `updated_at` | timestamp | |
+
+Unique constraint on `(bid_suggestion_id, bid_good_requirement_id)`.
+
+**A good whose specification the bidder ACCEPTED has no row** — the step's
+text box is empty by default and its placeholder reads «مشخصات کارفرما را
+میپذیرم», so leaving it alone is the answer "as specified is fine", and
+clearing a box deletes the row again. That makes "did this bidder change good
+X?" the presence of a row, which is exactly what the admin's پاکت الف screen
+tests to decide whether to put the ⚠ icon beside a specification.
+
+Why not a column on `bid_suggestion_items`? Because a row there means
+*priced*, and these two answers are independent: a bidder can note an
+alternative specification for a good and then not price it, or price a good
+and accept its specification as-is. Sharing the row would have forced
+`unit_price` to become nullable and broken "a row means priced" for every
+reader of it.
 
 ### `bid_suggestion_attachments`
 

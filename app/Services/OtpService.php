@@ -14,16 +14,18 @@ use Illuminate\Support\Facades\Hash;
  * `users` row doesn't exist until the code is verified (see ARCHITECTURE.md's
  * "Registration + OTP flow").
  *
- * Two flows use this service:
+ * Three flows use this service:
  *   registration      — prove you own a number before an account exists;
  *   finalising a bid  — prove the person pressing «ثبت نهایی» is holding the
- *                       phone of the account that is logged in.
+ *                       phone of the account that is logged in;
+ *   password reset    — prove you own the number of an account you can no
+ *                       longer log into (App\Filament\Auth\ForgotPassword).
  *
- * They share one table and one keying scheme deliberately. The two can never
+ * They share one table and one keying scheme deliberately. No two of them can
  * be in flight at the same time for the same number (you cannot be
- * registering and logged in at once), so there is nothing to keep apart. The
- * only place they differ is `purpose` in the sent_sms_log row, which exists
- * so support can tell the two kinds of send apart on the bill.
+ * registering, logged in and locked out at once), so there is nothing to keep
+ * apart. The only place they differ is `purpose` in the sent_sms_log row,
+ * which exists so support can tell the kinds of send apart on the bill.
  */
 class OtpService
 {
@@ -31,6 +33,9 @@ class OtpService
     public const PURPOSE_REGISTRATION = 'otp_registration';
 
     public const PURPOSE_BID_SUGGESTION = 'otp_bid_suggestion';
+
+    /** «فراموشی رمز عبور» — see App\Filament\Auth\ForgotPassword. */
+    public const PURPOSE_PASSWORD_RESET = 'otp_password_reset';
 
     /** How long a code stays valid: 2 minutes. */
     private const TTL_SECONDS = 120;
@@ -51,6 +56,9 @@ class OtpService
      * this is how long they then have to fill in the rest of the
      * registration form before the proof of ownership goes stale and they
      * have to start over from the mobile-number step.
+     *
+     * The password-reset wizard reuses the same window for the same reason —
+     * hence the deliberately generic value; the name is historical.
      */
     public const REGISTRATION_WINDOW_SECONDS = 600;
 

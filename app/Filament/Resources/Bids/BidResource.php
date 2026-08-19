@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Bids;
 use App\Filament\Resources\Bids\Pages\CreateBid;
 use App\Filament\Resources\Bids\Pages\EditBid;
 use App\Filament\Resources\Bids\Pages\ListBids;
+use App\Filament\Resources\Bids\Pages\OpenEnvelope;
 use App\Filament\Resources\Bids\Pages\SubmitSuggestion;
 use App\Filament\Resources\Bids\RelationManagers\AttachmentsRelationManager;
 use App\Filament\Resources\Bids\Schemas\BidForm;
@@ -72,14 +73,18 @@ class BidResource extends Resource
     }
 
     /**
-     * URL -> page class. These become /bids, /bids/create, /bids/1/edit and
-     * /bids/1/suggest.
+     * URL -> page class. These become /bids, /bids/create, /bids/1/edit,
+     * /bids/1/suggest and /bids/1/envelope/a.
      *
-     * The last one is not part of the usual CRUD set: it is the user-facing
-     * «ارسال پیشنهاد» wizard. It is registered as a resource page rather
-     * than a route in routes/web.php so it inherits the panel's auth
-     * middleware, breadcrumbs and layout for free, and so the row button can
-     * link to it with BidResource::getUrl('suggest', ...).
+     * The last two are not part of the usual CRUD set:
+     *   suggest  — the user-facing «ارسال پیشنهاد» wizard;
+     *   envelope — the admin's «بازکردن پاکت الف/ب» review screen, whose
+     *              `{stage}` segment is 'a' or 'b' (App\Enums\EnvelopeStage).
+     *
+     * Both are registered as resource pages rather than routes in
+     * routes/web.php so they inherit the panel's auth middleware, breadcrumbs
+     * and layout for free, and so a row button can link to them with
+     * BidResource::getUrl('suggest', ...) / getUrl('envelope', ...).
      */
     public static function getPages(): array
     {
@@ -88,6 +93,7 @@ class BidResource extends Resource
             'create' => CreateBid::route('/create'),
             'edit' => EditBid::route('/{record}/edit'),
             'suggest' => SubmitSuggestion::route('/{record}/suggest'),
+            'envelope' => OpenEnvelope::route('/{record}/envelope/{stage}'),
         ];
     }
 }

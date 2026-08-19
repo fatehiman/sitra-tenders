@@ -29,13 +29,19 @@ use Filament\Support\Contracts\HasLabel;
  *   دردست بررسی  — ALSO the Submitted case, but the tender's expire_at has
  *                  passed, so it is now waiting for review. Derived from the
  *                  clock, not stored — see BidSuggestion::getStatusLabel().
- *   فرم الف      — TODO(future): stamped when an admin opens Form A for this
- *                  suggestion. The admin review screens are not built yet;
- *                  the requirement is explicit that they come later, so the
- *                  case exists and nothing sets it today.
- *   فرم ب        — TODO(future): stamped when an admin opens Form B.
- *   تایید شده    — TODO(future): the admin accepted the bid.
- *   رد شده       — TODO(future): the admin rejected it, at whichever step.
+ *   فرم الف      — the offer got through پاکت الف (the technical envelope):
+ *                  the admin approved it there and finalised that envelope.
+ *                  Written by Bid::finalizeEnvelope().
+ *   فرم ب        — پاکت ب (the financial envelope) is being read now. Written
+ *                  when the admin OPENS پاکت ب, by
+ *                  Bid::markEnvelopeBInProgress() — it is a "where is my offer"
+ *                  signal for the bidder, not a verdict.
+ *   تایید شده    — the offer was approved in پاکت ب and that envelope was
+ *                  finalised: this bidder WON, and was texted so
+ *                  (App\Services\SuggestionResultNotifier).
+ *   رد شده       — the offer was declined, either in پاکت الف or in پاکت ب.
+ *                  Both land here: the bidder is told the outcome once, when
+ *                  پاکت ب is finalised.
  *   لغو شده      — an admin cancelled the bid (see BidsTable's «لغو» action).
  *                  This is the one non-linear transition: it can happen at
  *                  any point, it unlocks the tender for editing again, and it

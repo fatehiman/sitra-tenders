@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Bids\Tables;
 
+use App\Enums\EnvelopeStage;
 use App\Enums\RoleName;
 use App\Enums\SuggestionAttachmentType;
 use App\Filament\Resources\Bids\BidResource;
@@ -45,7 +46,14 @@ use Illuminate\Support\Facades\Storage;
  *                 and re-open it read-only afterwards.
  *   staff/admin — every tender in every state, how many live bids each has,
  *                 and a lock icon instead of «ویرایش» once anyone has bid.
- *   admin       — additionally «لغو», the only way to unlock a tender.
+ *   admin       — additionally «لغو» (the only way to unlock a tender) and the
+ *                 letter icons that drive the two-envelope review:
+ *                 «بازکردن پاکت الف» → «بازکردن پاکت ب» → «تخته برندگان».
+ *
+ * One rule cuts across all of it: an admin never sees WHOSE offer they are
+ * reading. Every screen here shows «مخفی شده» instead of the bidder's name
+ * until that bidder has won a finalised tender — see
+ * BidSuggestion::bidderNameForAdmin().
  */
 class BidsTable
 {
@@ -73,13 +81,22 @@ class BidsTable
                     return $query->active()->with([
                         'mySuggestion.items.requirement.good',
                         'mySuggestion.attachments',
+                        // Feeds the «مشخصات فنی قابل تامین» list in the
+                        // «مشاهده پیشنهاد» modal.
+                        'mySuggestion.specifications.requirement.good',
                     ]);
                 }
 
                 // 'activeSuggestions' (not a count) because Bid::isLocked()
                 // reads the loaded collection when it is there, and the
-                // «لغو» modal needs each bidder's name anyway.
-                return $query->with('activeSuggestions.user');
+                // «لغو» modal needs each offer's tracking code anyway.
+                //
+                // '.bid' looks circular — it is the tender we already have —
+                // but the «پیشنهادهای دریافتی» modal asks each SUGGESTION
+                // whether its tender's پاکت الف is finalised (that is where the
+                // "no prices before الف" rule lives), and without this that
+                // would be one extra query per offer in the modal.
+                return $query->with(['activeSuggestions.user', 'activeSuggestions.bid']);
             })
             ->columns([
                 TextColumn::make('title')
@@ -205,6 +222,9 @@ class BidsTable
                 self::viewGoodsAction(),
                 self::viewMySuggestionAction(),
                 self::viewSuggestionsAction(),
+                self::openEnvelopeAction(EnvelopeStage::A),
+                self::openEnvelopeAction(EnvelopeStage::B),
+                self::winnersAction(),
                 EditAction::make()
                     // Filament also asks BidPolicy::update() and hides this
                     // by itself once the tender is locked — which is exactly
@@ -482,6 +502,28 @@ class BidsTable
                     ->state(fn (Bid $record): string => number_format(
                         (int) self::liveSuggestion($record)?->total_price
                     )),
+                /*
+                 * The goods the user offered a DIFFERENT specification for, in
+                 * the wizard's «مشخصات فنی کالاها» step. Only those goods have
+                 * a row (an empty box means «مشخصات کارفرما را میپذیرم»), so an
+                 * empty list here reads as "I accepted everything as specified"
+                 * — which is what the placeholder says.
+                 */
+                RepeatableEntry::make('my_specifications')
+                    ->label('مشخصات فنی قابل تامین')
+                    ->state(fn (Bid $record): array => self::liveSuggestion($record)?->specifications->all() ?? [])
+                    ->placeholder('برای همه کالاها مشخصات فنی کارفرما را پذیرفته‌اید.')
+                    ->columnSpanFull()
+                    ->table([
+                        TableColumn::make('کد کالا'),
+                        TableColumn::make('شرح کالا'),
+                        TableColumn::make('مشخصات فنی قابل تامین'),
+                    ])
+                    ->schema([
+                        TextEntry::make('requirement.good.code')->hiddenLabel(),
+                        TextEntry::make('requirement.good.name')->hiddenLabel(),
+                        TextEntry::make('specifications')->hiddenLabel(),
+                    ]),
                 TextEntry::make('my_note')
                     ->label('متن پیشنهاد')
                     ->placeholder('—')
@@ -529,11 +571,10 @@ class BidsTable
     /**
      * Staff/admin — every live bid on this tender, read-only.
      *
-     * TODO(future): this is where the admin review flow will grow. The
-     * requirement is explicit that «فرم الف» and «فرم ب» are specified
-     * later; opening each of those forms is what will move a bid's status
-     * to FormA/FormB, and accepting/rejecting sets Approved/Rejected. See
-     * App\Enums\SuggestionStatus.
+     * The overview, not the review: the decisions themselves are made on
+     * App\Filament\Resources\Bids\Pages\OpenEnvelope, reached from the
+     * letter icons (openEnvelopeAction() below). Bidders are masked here, and
+     * amounts stay hidden until پاکت الف is finalised — see the notes inside.
      */
     private static function viewSuggestionsAction(): Action
     {
@@ -549,19 +590,44 @@ class BidsTable
                 RepeatableEntry::make('activeSuggestions')
                     ->hiddenLabel()
                     ->placeholder('هنوز پیشنهادی برای این مناقصه ارسال نشده است.')
-                    ->table([
+                    /*
+                     * «مبلغ کل» is deliberately ABSENT until پاکت الف has been
+                     * finalised.
+                     *
+                     * The two-envelope process only means something if the
+                     * technical judgement is made without the amounts in view —
+                     * and this modal would have shown every offer's total right
+                     * next to it. So the column (and the entry below it) appear
+                     * only once الف is submitted, i.e. once the financial
+                     * envelope is the stage the tender is actually at.
+                     */
+                    ->table(fn (Bid $record): array => array_values(array_filter([
                         TableColumn::make('پیشنهاددهنده'),
                         TableColumn::make('کد پیگیری'),
                         TableColumn::make('تاریخ و ساعت ارسال'),
                         TableColumn::make('وضعیت'),
-                        TableColumn::make('مبلغ کل (ریال)'),
+                        $record->envelopeIsSubmitted(EnvelopeStage::A)
+                            ? TableColumn::make('مبلغ کل (ریال)')
+                            : null,
                         TableColumn::make('روش پرداخت ودیعه'),
                         TableColumn::make('متن پیشنهاد'),
-                    ])
+                    ])))
                     ->schema([
-                        // display_name is the company name for a حقوقی
-                        // account and the person's full name otherwise.
-                        TextEntry::make('user.display_name')->hiddenLabel(),
+                        /*
+                         * «مخفی شده» — NOT the bidder's name.
+                         *
+                         * An admin must not be able to tell whose offer they
+                         * are looking at while a tender is being reviewed, so
+                         * every screen an offer appears on shows the masked
+                         * value; only the WINNERS are unmasked, and only once
+                         * پاکت ب has been finalised. The rule itself lives in
+                         * BidSuggestion::bidderNameForAdmin(), so this modal,
+                         * the «لغو» modal and the envelope pages can never
+                         * disagree about it.
+                         */
+                        TextEntry::make('bidder_name')
+                            ->hiddenLabel()
+                            ->state(fn (BidSuggestion $record): string => $record->bidderNameForAdmin()),
                         TextEntry::make('tracking_code')->hiddenLabel()->placeholder('—'),
                         TextEntry::make('submitted_at')->hiddenLabel()->jalaliDateTime(),
                         TextEntry::make('status')
@@ -570,16 +636,137 @@ class BidsTable
                             ->state(fn (BidSuggestion $record): string => $record->getStatusLabel())
                             ->color(fn (BidSuggestion $record): string => $record->getStatusColor()),
                         // number_format, not ->numeric(): Latin digits, like
-                        // every other number in the panel.
+                        // every other number in the panel. Hidden until پاکت
+                        // الف is finalised — see the ->table() note above.
                         TextEntry::make('total_price')
                             ->hiddenLabel()
                             ->placeholder('—')
+                            ->visible(fn (BidSuggestion $record): bool => (bool) $record->bid
+                                ?->envelopeIsSubmitted(EnvelopeStage::A))
                             ->formatStateUsing(fn (?int $state): string => number_format((int) $state)),
                         TextEntry::make('payment_type')
                             ->hiddenLabel()
                             ->placeholder('—')
                             ->state(fn (BidSuggestion $record): ?string => $record->payment_type?->getLabel()),
                         TextEntry::make('note')->hiddenLabel()->placeholder('—'),
+                    ]),
+            ])
+            ->modalSubmitAction(false)
+            ->modalCancelActionLabel('بستن');
+    }
+
+    /*
+     * ---- The admin's two-envelope review ----------------------------------
+     */
+
+    /**
+     * The closed-letter icon: «بازکردن پاکت الف», then «بازکردن پاکت ب».
+     *
+     * ONE action per stage, each with its own ->visible() rule, rather than one
+     * action that changes what it does — because an action either navigates
+     * (->url()) or opens a modal, and these three states need two of the
+     * former and one of the latter (see winnersAction()).
+     *
+     * What the admin sees on a row, in order over the tender's life:
+     *   closed letter, primary  — الف can be opened (tender expired, offers
+     *                             exist, الف not finalised);
+     *   closed letter, orange   — الف is done, ب is waiting;
+     *   open letter, grey       — both done; the icon now opens the win board.
+     * The icon stays a CLOSED letter for both stages on purpose: it only opens
+     * when the whole review is over, which is what makes "is this tender
+     * finished?" readable at a glance down the column.
+     *
+     * Admin only, like «لغو» — Bid::envelopeIsOpenable() and the page's own
+     * guard() re-check that server-side, so hiding the button is a courtesy,
+     * not the security boundary.
+     */
+    private static function openEnvelopeAction(EnvelopeStage $stage): Action
+    {
+        return Action::make('openEnvelope'.strtoupper($stage->value))
+            ->label($stage->openLabel())
+            ->tooltip($stage->openLabel())
+            ->icon(Heroicon::OutlinedEnvelope)
+            ->iconButton()
+            // پاکت الف is the ordinary next step; پاکت ب is highlighted in
+            // orange to say "this tender is half-reviewed, it needs you again".
+            ->color($stage === EnvelopeStage::A ? 'primary' : 'warning')
+            ->visible(fn (Bid $record): bool => self::isAdmin() && $record->envelopeIsOpenable($stage))
+            // A plain navigation, so there is no ->action() to run: the page on
+            // the other end does the whole job.
+            ->url(fn (Bid $record): string => BidResource::getUrl('envelope', [
+                'record' => $record,
+                'stage' => $stage->value,
+            ]));
+    }
+
+    /**
+     * «تخته برندگان» — the open-letter icon, once both envelopes are finalised.
+     *
+     * This is the ONE screen in the app where an admin sees who a bidder was:
+     * the review is over, the winners are decided, and their contact and
+     * registration details are exactly what is needed to award the contract.
+     * Non-winners stay anonymous forever — they are simply not on this list.
+     */
+    private static function winnersAction(): Action
+    {
+        return Action::make('winners')
+            ->label('تخته برندگان')
+            ->tooltip('تخته برندگان')
+            ->icon(Heroicon::OutlinedEnvelopeOpen)
+            ->iconButton()
+            // Grey: nothing is left to do on this tender.
+            ->color('gray')
+            ->visible(fn (Bid $record): bool => ! self::isUser() && $record->reviewIsFinished())
+            ->modalHeading(fn (Bid $record): string => "برندگان مناقصه — {$record->title}")
+            ->modalWidth(Width::SevenExtraLarge)
+            ->schema([
+                TextEntry::make('envelope_dates')
+                    ->label('تاریخ ثبت نهایی پاکت‌ها')
+                    ->state(fn (Bid $record): array => [
+                        'پاکت الف: '.self::jalali($record->envelope_a_submitted_at),
+                        'پاکت ب: '.self::jalali($record->envelope_b_submitted_at),
+                    ])
+                    ->listWithLineBreaks()
+                    ->columnSpanFull(),
+                RepeatableEntry::make('winners')
+                    ->hiddenLabel()
+                    ->state(fn (Bid $record): array => $record->winners()->all())
+                    ->placeholder('هیچ پیشنهادی در پاکت ب تایید نشد؛ این مناقصه برنده‌ای ندارد.')
+                    ->columnSpanFull()
+                    ->table([
+                        TableColumn::make('برنده'),
+                        TableColumn::make('نام و نام خانوادگی'),
+                        TableColumn::make('شماره موبایل'),
+                        TableColumn::make('کد ملی / شناسه ملی'),
+                        TableColumn::make('کد پیگیری'),
+                        TableColumn::make('مبلغ کل (ریال)'),
+                    ])
+                    ->schema([
+                        // display_name is the company name for a حقوقی account
+                        // and the person's full name otherwise.
+                        TextEntry::make('user.display_name')->hiddenLabel(),
+                        TextEntry::make('winner_person_name')
+                            ->hiddenLabel()
+                            ->state(fn (BidSuggestion $record): string => trim(
+                                "{$record->user?->first_name} {$record->user?->last_name}"
+                            )),
+                        TextEntry::make('user.mobile')
+                            ->hiddenLabel()
+                            ->copyable(),
+                        // Both IDs on two lines: a حقوقی winner has a شناسه
+                        // ملی as well as the signatory's own کد ملی, and the
+                        // contract needs whichever applies.
+                        TextEntry::make('winner_ids')
+                            ->hiddenLabel()
+                            ->state(fn (BidSuggestion $record): array => array_values(array_filter([
+                                filled($record->user?->national_id) ? 'کد ملی: '.$record->user->national_id : null,
+                                filled($record->user?->company_national_id) ? 'شناسه ملی: '.$record->user->company_national_id : null,
+                            ])))
+                            ->listWithLineBreaks(),
+                        TextEntry::make('tracking_code')->hiddenLabel()->placeholder('—'),
+                        TextEntry::make('total_price')
+                            ->hiddenLabel()
+                            ->formatStateUsing(fn (?int $state): string => number_format((int) $state)),
                     ]),
             ])
             ->modalSubmitAction(false)
@@ -644,9 +831,18 @@ class BidsTable
                      * ->jalaliDateTime() macros do; it is spelled out here
                      * because this is a plain string, not a column.
                      */
+                    /*
+                     * The bidder is masked here too (see the «پیشنهادهای
+                     * دریافتی» modal above for why), so each option is
+                     * identified by its «کد پیگیری» and submission time —
+                     * enough to tell two offers apart without saying whose
+                     * they are.
+                     */
                     ->options(fn (Bid $record): array => $record->activeSuggestions
                         ->mapWithKeys(fn (BidSuggestion $suggestion): array => [
-                            $suggestion->id => $suggestion->user?->display_name
+                            $suggestion->id => $suggestion->bidderNameForAdmin()
+                                .' — '
+                                .($suggestion->tracking_code ?: '—')
                                 .' — '
                                 // submitted_at is only null for rows created
                                 // before it existed, hence the dash fallback.

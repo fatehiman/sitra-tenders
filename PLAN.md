@@ -404,6 +404,61 @@ updated as work lands — it's the source of truth for "what's left."
       --no-dev` (new `PaymentType` class) and `php artisan optimize`.
       `/login` and `/` verified live, no new log entries after the fix
 
+## Phase 13 — specifications step, password reset, and the two-envelope review (2026-08-19)
+
+- [x] **Upload speed investigated and closed as NOT an app problem.** Measured
+      rather than guessed: 3 MB to `sitra.ir` at ~1.72 MB/s vs ~1.35 MB/s to
+      `speed.cloudflare.com` on the same connection, i.e. the server beats the
+      general internet baseline and the ceiling is the client's own ~14 Mbit/s
+      uplink. Nothing in the request path adds work (no image processing, PHP
+      limits already raised via `public/.user.ini`), so no code changed — see
+      [ARCHITECTURE.md](ARCHITECTURE.md#upload-speed-measured-and-not-the-app-2026-08-19)
+- [x] **New wizard step 3 «مشخصات فنی کالاها»**, before «قیمت کالاها»: the same
+      goods table with a «مشخصات فنی قابل تامین» box per good, placeholder
+      «مشخصات کارفرما را میپذیرم». Empty = accepts the employer's spec and
+      stores NO row (`bid_suggestion_specifications`); typed = the spec they
+      can supply. No جمع column, no total. The employer's «ابعاد و مشخصات فنی»
+      column was removed from the price step — that question is asked and
+      answered on the new step
+- [x] **«فراموشی رمز عبور»** (`App\Filament\Auth\ForgotPassword`): mobile →
+      OTP → new password twice → logged straight in. Extends Filament's
+      `RequestPasswordReset` for the auth chrome and rate limiter but replaces
+      its email-link flow entirely (no email column exists); registered via
+      `->passwordReset(...)`, which also puts the link under the login form
+- [x] **Project title** is now «سامانه الکترونیکی مدیریت استعلام پیشنهادات
+      تامین کنندگان» (`APP_NAME`), with `->brandName('سامانه مدیریت استعلام')`
+      for the 250px sidebar
+- [x] **Bidder identity is masked from admins** — «مخفی شده» in the
+      «پیشنهادهای دریافتی» modal, the «لغو» list (offers identified by «کد
+      پیگیری» + time instead) and both envelope screens, via the single rule
+      `BidSuggestion::bidderNameForAdmin()`. Only winners of a finalised tender
+      are unmasked. «مبلغ کل» is also hidden in that modal until پاکت الف is
+      finalised, or the whole point of opening الف first would be lost
+- [x] **The two-envelope admin review** (`OpenEnvelope`, at
+      `/bids/{record}/envelope/{a|b}`): one offer at a time, تایید/رد +
+      قبلی/بعدی, a review list, and a «ثبت نهایی» behind an "cannot be undone"
+      checkbox. Verdicts are saved as drafts in
+      `bid_suggestions.envelope_?_decision`; only `bids.envelope_?_submitted_at`
+      (written with the statuses in one transaction) makes them real. الف hides
+      prices completely; ب shows them and only contains الف-approved offers.
+      Letter icon: closed/primary → closed/orange → open/grey «تخته برندگان»
+- [x] **Result SMS**: templates 23572 (`bid_won`) and 23573 (`bid_declined`) in
+      `config/sms.php`, sent by `App\Services\SuggestionResultNotifier` after
+      پاکت ب commits — winners get 23572, **every other live bidder** gets
+      23573 (including those rejected in الف). Params: bidder's name + family,
+      then the tender title. Failures are logged, never thrown: a provider
+      outage must not roll back an irreversible review
+- [x] Two migrations (`bid_suggestion_specifications`, the four envelope
+      columns) and 17 new/updated tests — the wizard's step numbers shifted,
+      plus new suites for the password-reset wizard and both envelopes;
+      80 passing
+- [ ] **Deploy to sitra.ir** — pending: SSH (162.55.167.140:22) was
+      unreachable from the dev machine while this phase was built. When it is
+      back: ship, run the two migrations, `composer dump-autoload --optimize
+      --no-dev` (new enum/model/service/page classes), `php artisan optimize`,
+      and **update `APP_NAME` and the two `MSGWAY_TEMPLATE_BID_*` keys in the
+      server's `.env`**
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not
@@ -421,17 +476,13 @@ updated as work lands — it's the source of truth for "what's left."
 
 - Whether a 4th role is needed, and what it can do (mentioned as a
   possibility, not specified)
-- Whether OTP is ever needed for **login** (not just registration) or for
-  password reset — today password reset has no spec at all; flag to the
-  user before building it
-- **The admin review flow — Form الف and Form ب — is specified later.** The
-  status ladder that flow drives already exists
-  (`App\Enums\SuggestionStatus`): opening Form الف for a bid should move it
-  to `form_a`, opening Form ب to `form_b`, and accepting/rejecting to
-  `approved`/`rejected`. `BidsTable::viewSuggestionsAction()` is where those
-  screens attach. **What a پیشنهاد contains is no longer open** — per-good
-  ریال pricing, attachments and a payment receipt, all built in Phase 11.
-  Still open: notifications to staff/admin when a bid arrives, and whether
-  admins should be able to look a bid up by its «کد پیگیری»
+- Whether OTP is ever needed for **login** as well. Password reset now uses
+  it (Phase 13); login still does not
+- **The admin review flow is built** (Phase 13 — پاکت الف / پاکت ب), and it
+  writes the whole status ladder. Still open around it: notifications to
+  staff/admin when a bid ARRIVES (only the result SMS to bidders exists),
+  whether admins should be able to look a bid up by its «کد پیگیری», and
+  whether a finalised envelope should ever be re-openable by some
+  higher-privileged route (today it is deliberately never re-openable)
 - Whether Redis should be adopted for queue/cache if tender volume or
   attachment processing grows enough to matter

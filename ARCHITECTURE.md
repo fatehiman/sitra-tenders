@@ -506,7 +506,7 @@ A پیشنهاد is a **priced offer**, built up over a seven-step wizard at
 |---|---|
 | 1 «شرایط مناقصه» | the tender's own description and attachments, exactly as the «مشاهده» eye icon on the مناقصات table shows them, plus a checkbox — «شرایط مناقصه را خواندم و موافق هستم» — that must be ticked before the user may continue |
 | 2 «پرداخت» | the ودیعه (`bids.deposit_amount`) is shown at the top, then one of three payment methods: **پرداخت الکترونیک** (a placeholder link — no real gateway exists yet, so choosing it does not block moving on), **بارگذاری ضمانت‌نامه بانکی** (a mandatory PDF/Word/image upload), or **نامه کسر از مطالبات** (a fill-in-the-blank version of the official letter text, with an optional attachment) |
-| 3 «مشخصات فنی کالاها» | the same goods table as the next step, but with a text box per good headed «مشخصات فنی قابل تامین» instead of a price. **An empty box is the normal answer** — its placeholder reads «مشخصات کارفرما را میپذیرم», i.e. "I accept the employer's technical specification for this good"; anything typed is the specification the bidder can supply instead. No «جمع» column and no total: this step is about specifications only |
+| 3 «مشخصات فنی کالاها» | the same goods table as the next step — **plus a «نقشه» column** whose links open each good's drawings in a new tab, because reading the drawing is how a bidder answers this step (before, the نقشه files were only reachable from the «کالاهای مورد نیاز» modal back on the مناقصات table, i.e. by leaving the wizard) — with a text box per good headed «مشخصات فنی قابل تامین» instead of a price. **An empty box is the normal answer** — its placeholder reads «مشخصات کارفرما را میپذیرم», i.e. "I accept the employer's technical specification for this good"; anything typed is the specification the bidder can supply instead. No «جمع» column and no total: this step is about specifications only |
 | 4 «قیمت کالاها» | every «کالای مورد نیاز» of the tender as a table row, with a ریال box for the unit price. The line total (price × requested quantity) and the grand total recompute on blur. An empty box means "I am not supplying this good". It no longer repeats the employer's «ابعاد و مشخصات فنی» column — step 3 is where that question is asked and answered |
 | 5 «توضیحات و پیوست‌ها» | the free-text «متن پیشنهاد», plus up to **10** supporting files (same allow-list as a tender's own attachments) |
 | 6 «تایید نهایی» | no fields: it shows the account's mobile number and what is about to happen. Pressing «بعدی» is what SENDS the SMS |
@@ -689,6 +689,37 @@ records the verdict and advances; «قبلی»/«بعدی» move freely so a ver
 be revisited; after the last offer comes a review list, and «ثبت نهایی»
 (behind an "I understand this cannot be undone" checkbox in its own
 confirmation modal) is what commits the stage.
+
+### Every click is a page load, and that is the fix for a real bug
+
+The offer on screen is a **query parameter**, `?offer=N`, and تایید/رد/قبلی/بعدی
+all work by REDIRECTING to a new `?offer=` rather than by changing a property
+and re-rendering in place (`OpenEnvelope::moveTo()`).
+
+That is not a stylistic choice. Those buttons are schema actions rendered
+*inside the section they replace*: pressing تایید on the last offer swaps the
+offer section for the review section, which deletes the schema component the
+pressed button belongs to — and Filament still has to finish that action's
+lifecycle against a component that no longer exists. Reported from production
+on a tender with a single offer: the verdict WAS written to the database, but
+the page kept the old body and lost its buttons. The same thing happened to
+«قبلی» on the review screen.
+
+Redirecting ends the request instead of re-rendering it, so the action finishes
+against the schema it was mounted from and the next screen arrives as a fresh
+page whose `mount()` re-reads everything. It costs one page load per click,
+which is the right trade on a screen where every click is a deliberate
+decision — and it makes the URL a real position, so refresh and the browser's
+back button both behave. `$index` still has to be a **public** Livewire
+property (`mount()` does not run again for the click's own request, so a private
+one would be back at 0 by the time the verdict was recorded — i.e. recorded
+against the wrong offer), and it is clamped on every read because it arrives
+from the URL.
+
+Two labels follow from the same problem: on the last offer «بعدی» reads
+«مرور و ثبت نهایی» (a plain «بعدی» on the final offer looks like a dead end),
+and on the review screen «قبلی» reads «بازگشت و تغییر تصمیم‌ها» (a bare «قبلی»
+next to «ثبت نهایی پاکت الف» read as a stray wizard control).
 
 ### Drafts, and the one irreversible moment
 

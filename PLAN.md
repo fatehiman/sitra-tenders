@@ -472,6 +472,33 @@ updated as work lands — it's the source of truth for "what's left."
       once cached, but the lesson generalises: **when a deploy adds a ROUTE,
       re-run `php artisan optimize` in the same breath as the extract**
 
+## Phase 13.1 — envelope navigation fix + نقشه on the specifications step (2026-08-19)
+
+- [x] **Bug, reported from production: deciding the last offer went nowhere.**
+      On `/bids/4/envelope/a` (a tender with one offer) تایید/رد wrote the
+      verdict but left the old body on screen with only قبلی/بعدی, and «قبلی»
+      on the review screen vanished instead of going back. Cause: those buttons
+      are schema actions living *inside* the section the decision replaces, so
+      Filament had to finish an action whose own schema component had just been
+      deleted. Fixed by making the offer position a `?offer=N` query parameter
+      and every button a REDIRECT (`OpenEnvelope::moveTo()`), which ends the
+      request instead of re-rendering it — one page load per click, and the URL
+      becomes a real position (refresh/back work). Written up under
+      [ARCHITECTURE.md](ARCHITECTURE.md#every-click-is-a-page-load-and-that-is-the-fix-for-a-real-bug)
+- [x] **Two labels that were misread**: «بعدی» on the last offer now says
+      «مرور و ثبت نهایی», and «قبلی» on the review screen says «بازگشت و تغییر
+      تصمیم‌ها» — a bare «قبلی» beside the orange finalise button read as a
+      stray control
+- [x] **«نقشه» column on wizard step 3** «مشخصات فنی کالاها»: each good's
+      drawings as links that open in a new tab, since reading the drawing is how
+      a bidder decides whether they can supply to the employer's specification.
+      `requirements()` now eager-loads `good.drawings`, so the column costs no
+      extra query per row
+- [x] Three regression tests for the navigation bug (decide-the-only-offer,
+      go-back-from-review, out-of-range `?offer=`) plus the نقشه assertion on
+      the render test; 83 passing
+- [x] **Deployed to sitra.ir on 2026-08-19** (second deploy of the day)
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not

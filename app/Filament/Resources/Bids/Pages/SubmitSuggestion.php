@@ -13,6 +13,7 @@ use App\Models\BidAttachment;
 use App\Models\BidGoodRequirement;
 use App\Models\BidSuggestion;
 use App\Models\BidSuggestionAttachment;
+use App\Models\GoodDrawing;
 use App\Models\User;
 use App\Services\OtpService;
 use App\Sms\SmsResult;
@@ -74,8 +75,10 @@ use Illuminate\Validation\ValidationException;
  *                          mandatory file), or نامه کسر از مطالبات (a
  *                          fill-in-the-blank letter, with an optional
  *                          attachment).
- *   3 «مشخصات فنی کالاها» — the same goods table as the next step, but with
- *                          one text box per good instead of a price: EMPTY
+ *   3 «مشخصات فنی کالاها» — the same goods table as the next step (plus the
+ *                          good's نقشه files as links, because that is what a
+ *                          bidder reads to answer this), but with one text box
+ *                          per good instead of a price: EMPTY
  *                          means «مشخصات کارفرما را میپذیرم» (I accept the
  *                          employer's technical specification), and anything
  *                          typed there is the specification the bidder can
@@ -249,7 +252,10 @@ class SubmitSuggestion extends Page
     {
         return $this->requirements ??= $this->getRecord()
             ->goodRequirements()
-            ->with('good')
+            // '.drawings' as well as the good itself: the «مشخصات فنی کالاها»
+            // step lists each good's نقشه links, and without this that would be
+            // one query per row per render (the classic N+1).
+            ->with('good.drawings')
             ->get()
             ->keyBy('id');
     }
@@ -376,6 +382,37 @@ class SubmitSuggestion extends Page
         ))->implode('<br>');
 
         return new HtmlString($links);
+    }
+
+    /**
+     * One requirement row's نقشه files, as downloadable links.
+     *
+     * Built the same way renderBidAttachmentLinks() above builds the tender's
+     * own attachment list, and for the same reason it cannot be hand-written
+     * markup: the panel's compiled CSS carries only Filament's own `fi-*`
+     * classes, so <x-filament::link> is what makes these look like every other
+     * link in the panel (see ARCHITECTURE.md, "Panel CSS has no Tailwind
+     * utilities").
+     *
+     * Opens in a new tab rather than downloading outright — a bidder comparing
+     * a drawing against the specification box next to it wants it beside the
+     * form, not in their downloads folder.
+     */
+    private function renderDrawingLinks(?BidGoodRequirement $requirement): HtmlString
+    {
+        $drawings = $requirement?->good?->drawings;
+
+        if (! $drawings || $drawings->isEmpty()) {
+            return new HtmlString('—');
+        }
+
+        return new HtmlString($drawings->map(fn (GoodDrawing $drawing): string => Blade::render(
+            '<x-filament::link :href="$url" target="_blank" icon="heroicon-o-paper-clip">{{ $name }}</x-filament::link>',
+            [
+                'url' => Storage::disk($drawing->disk)->url($drawing->path),
+                'name' => $drawing->original_name,
+            ],
+        ))->implode('<br>'));
     }
 
     /**
@@ -557,6 +594,7 @@ class SubmitSuggestion extends Page
                         TableColumn::make('کد کالا'),
                         TableColumn::make('شرح کالا'),
                         TableColumn::make('ابعاد و مشخصات فنی کارفرما'),
+                        TableColumn::make('نقشه'),
                         TableColumn::make('تعداد'),
                         TableColumn::make('مشخصات فنی قابل تامین'),
                     ])
@@ -573,6 +611,21 @@ class SubmitSuggestion extends Page
                         Placeholder::make('spec_employer')
                             ->hiddenLabel()
                             ->content(fn (Get $get): string => $this->requirement($get('requirement_id'))?->good?->specifications ?? '—'),
+                        /*
+                         * The good's نقشه files, as download links.
+                         *
+                         * Deciding whether you can supply a good to the
+                         * employer's specification means reading its drawing,
+                         * and the drawings were only reachable from the
+                         * «کالاهای مورد نیاز» modal back on the مناقصات table —
+                         * i.e. behind leaving the wizard. They belong on the
+                         * step that asks the question.
+                         */
+                        Placeholder::make('spec_drawings')
+                            ->hiddenLabel()
+                            ->content(fn (Get $get): HtmlString => $this->renderDrawingLinks(
+                                $this->requirement($get('requirement_id'))
+                            )),
                         Placeholder::make('spec_quantity')
                             ->hiddenLabel()
                             // number_format, not ->numeric(): Latin digits,

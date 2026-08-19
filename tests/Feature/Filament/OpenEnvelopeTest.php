@@ -34,6 +34,13 @@ use Tests\TestCase;
  * One thing the tests therefore do NOT cover: the "I understand this cannot be
  * undone" checkbox, which lives in the «ثبت نهایی» action's own confirmation
  * modal and is a UI gate in front of submit(), not part of it.
+ *
+ * Note the shape every "walk through the offers" test has to take. Each
+ * decision/navigation ends in a REDIRECT to `?offer=N` (see
+ * OpenEnvelope::moveTo() for the production bug that forced it), so a test
+ * cannot drive several offers through one component instance: it opens the page
+ * at the offer it means to act on, using Livewire::withQueryParams(), the same
+ * way the browser arrives there.
  */
 class OpenEnvelopeTest extends TestCase
 {
@@ -110,6 +117,18 @@ class OpenEnvelopeTest extends TestCase
         return $suggestion->fresh();
     }
 
+    /**
+     * Open the review page at one offer position, exactly as the browser does
+     * after a redirect: `?offer=$offer`.
+     */
+    private function openAt(Bid $bid, EnvelopeStage $stage, int $offer = 0)
+    {
+        return Livewire::withQueryParams(['offer' => $offer])->test(OpenEnvelope::class, [
+            'record' => $bid->getKey(),
+            'stage' => $stage->value,
+        ]);
+    }
+
     private function fakeSms(): FakeSmsGateway
     {
         $fake = new FakeSmsGateway;
@@ -142,15 +161,20 @@ class OpenEnvelopeTest extends TestCase
         /*
          * ---- پاکت الف --------------------------------------------------
          */
-        $page = Livewire::test(OpenEnvelope::class, [
-            'record' => $bid->getKey(),
-            'stage' => EnvelopeStage::A->value,
-        ])->assertSuccessful();
-
         // Offers are reviewed in id order, so this is winner, loserA, loserB.
-        $page->call('decide', EnvelopeDecision::Approved->value)
+        // Each decision redirects to the next `?offer=`, so each one is driven
+        // from the page opened at that position — as the browser does.
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->assertSuccessful()
+            ->call('decide', EnvelopeDecision::Approved->value)
+            ->assertRedirectContains('offer=1');
+        $this->openAt($bid, EnvelopeStage::A, 1)
             ->call('decide', EnvelopeDecision::Declined->value)
-            ->call('decide', EnvelopeDecision::Approved->value);
+            ->assertRedirectContains('offer=2');
+        $this->openAt($bid, EnvelopeStage::A, 2)
+            ->call('decide', EnvelopeDecision::Approved->value)
+            // Past the last offer: the review screen.
+            ->assertRedirectContains('offer=3');
 
         // Decisions are stored right away — but they are still DRAFTS: the
         // statuses, and the tender itself, are untouched.
@@ -161,7 +185,12 @@ class OpenEnvelopeTest extends TestCase
         // And nothing has been texted: all result SMS goes out with پاکت ب.
         $this->assertSame([], $sms->messages);
 
-        $page->call('submit');
+        // The review screen — where «ثبت نهایی» lives.
+        $review = $this->openAt($bid, EnvelopeStage::A, 3)
+            ->assertSuccessful()
+            ->assertSee('مرور و ثبت نهایی');
+
+        $review->call('submit');
 
         $bid = $bid->fresh();
         $this->assertNotNull($bid->envelope_a_submitted_at);
@@ -172,19 +201,19 @@ class OpenEnvelopeTest extends TestCase
         /*
          * ---- پاکت ب ----------------------------------------------------
          */
-        $page = Livewire::test(OpenEnvelope::class, [
-            'record' => $bid->getKey(),
-            'stage' => EnvelopeStage::B->value,
-        ])->assertSuccessful();
+        $this->openAt($bid, EnvelopeStage::B, 0)
+            ->assertSuccessful()
+            ->call('decide', EnvelopeDecision::Approved->value);
 
         // Opening ب moves the الف-approved offers to «فرم ب» — a "where is my
         // offer" signal for the bidder, not a verdict.
-        $this->assertSame(SuggestionStatus::FormB, $winning->fresh()->status);
+        $this->assertSame(SuggestionStatus::FormB, $rejectedInB->fresh()->status);
         // The offer rejected in الف stays rejected and is NOT in this envelope.
         $this->assertSame(SuggestionStatus::Rejected, $rejectedInA->fresh()->status);
 
-        $page->call('decide', EnvelopeDecision::Approved->value)
-            ->call('decide', EnvelopeDecision::Declined->value)
+        $this->openAt($bid, EnvelopeStage::B, 1)
+            ->call('decide', EnvelopeDecision::Declined->value);
+        $this->openAt($bid, EnvelopeStage::B, 2)
             ->call('submit');
 
         $bid = $bid->fresh();
@@ -241,12 +270,12 @@ class OpenEnvelopeTest extends TestCase
 
         $this->actingAs($admin);
 
-        Livewire::test(OpenEnvelope::class, [
-            'record' => $bid->getKey(),
-            'stage' => EnvelopeStage::A->value,
-        ])
-            // Only the first offer is decided.
-            ->call('decide', EnvelopeDecision::Approved->value)
+        // Only the first offer is decided; the second is skipped past.
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->call('decide', EnvelopeDecision::Approved->value);
+
+        $this->openAt($bid, EnvelopeStage::A, 2)
+            ->assertSee('تصمیم‌گیری نشده')
             ->call('submit');
 
         $this->assertNull($bid->fresh()->envelope_a_submitted_at);
@@ -292,11 +321,9 @@ class OpenEnvelopeTest extends TestCase
 
         $this->actingAs($admin);
 
-        Livewire::test(OpenEnvelope::class, [
-            'record' => $bid->getKey(),
-            'stage' => EnvelopeStage::A->value,
-        ])
-            ->call('decide', EnvelopeDecision::Approved->value)
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->call('decide', EnvelopeDecision::Approved->value);
+        $this->openAt($bid, EnvelopeStage::A, 1)
             ->call('submit');
 
         $firstSubmittedAt = $bid->fresh()->envelope_a_submitted_at;
@@ -378,17 +405,12 @@ class OpenEnvelopeTest extends TestCase
         $this->actingAs($admin);
 
         // Rejected in الف, so ب contains nothing at all.
-        Livewire::test(OpenEnvelope::class, [
-            'record' => $bid->getKey(),
-            'stage' => EnvelopeStage::A->value,
-        ])
-            ->call('decide', EnvelopeDecision::Declined->value)
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->call('decide', EnvelopeDecision::Declined->value);
+        $this->openAt($bid, EnvelopeStage::A, 1)
             ->call('submit');
 
-        Livewire::test(OpenEnvelope::class, [
-            'record' => $bid->getKey(),
-            'stage' => EnvelopeStage::B->value,
-        ])
+        $this->openAt($bid, EnvelopeStage::B, 0)
             ->assertSuccessful()
             ->call('submit');
 
@@ -399,6 +421,105 @@ class OpenEnvelopeTest extends TestCase
         $this->assertSame(SuggestionStatus::Rejected, $suggestion->fresh()->status);
         // The bidder still gets the declined text at پاکت ب time.
         $this->assertCount(1, $sms->messagesOfTemplate('bid_declined'));
+    }
+
+    /**
+     * REGRESSION (reported from production, tender with a single offer).
+     *
+     * Deciding the LAST offer has to land on the review screen. It did commit
+     * the verdict, but the page kept the old body and lost its buttons, because
+     * the pressed button was a schema action inside the very section the
+     * decision replaced — see OpenEnvelope::moveTo(). Three things are pinned
+     * here: the redirect happens, it points past the last offer, and the page
+     * it points at is the review screen with the submit button and no decision
+     * buttons left on it.
+     */
+    public function test_deciding_the_only_offer_lands_on_the_review_screen(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000180', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000181', '0499370899');
+
+        $bid = $this->makeExpiredBid($admin);
+        $suggestion = $this->makeSuggestion($bid, $user, 1000);
+
+        $this->actingAs($admin);
+
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->assertSee('پیشنهاد 1 از 1')
+            // On the last offer «بعدی» says where it goes.
+            ->assertSee('مرور و ثبت نهایی')
+            ->call('decide', EnvelopeDecision::Approved->value)
+            ->assertRedirectContains('offer=1');
+
+        $this->assertSame(EnvelopeDecision::Approved, $suggestion->fresh()->envelope_a_decision);
+
+        $this->openAt($bid, EnvelopeStage::A, 1)
+            ->assertSuccessful()
+            ->assertSee('مرور و ثبت نهایی پاکت الف')
+            ->assertSee('ثبت نهایی پاکت الف')
+            // The way back is spelled out rather than a bare «قبلی» next to the
+            // finalise button.
+            ->assertSee('بازگشت و تغییر تصمیم‌ها')
+            ->assertDontSee('پیشنهاد 1 از 1')
+            // No decision buttons survive onto the review screen — their action
+            // names are what the rendered buttons carry.
+            ->assertDontSee('decideApproved')
+            ->assertDontSee('decideDeclined');
+    }
+
+    /**
+     * REGRESSION: «بازگشت و تغییر تصمیم‌ها» on the review screen must actually
+     * put the offer back on screen.
+     *
+     * Same root cause as the test above — the button deleted its own schema
+     * component, so it vanished and the review list stayed put.
+     */
+    public function test_going_back_from_the_review_screen_shows_the_offer_again(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000190', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000191', '0499370899');
+
+        $bid = $this->makeExpiredBid($admin);
+        $this->makeSuggestion($bid, $user, 1000);
+
+        $this->actingAs($admin);
+
+        $this->openAt($bid, EnvelopeStage::A, 1)
+            ->call('previous')
+            ->assertRedirectContains('offer=0');
+
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->assertSuccessful()
+            ->assertSee('پیشنهاد 1 از 1')
+            ->assertDontSee('مرور و ثبت نهایی پاکت الف');
+    }
+
+    /**
+     * An `?offer=` far past the end is clamped to the review screen rather than
+     * read out of bounds — it arrives from the URL, so it can be anything.
+     */
+    public function test_an_out_of_range_offer_parameter_is_clamped(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $this->fakeSms();
+
+        $admin = $this->makeUser(RoleName::Admin, '09120000210', '1234567891');
+        $user = $this->makeUser(RoleName::User, '09120000211', '0499370899');
+
+        $bid = $this->makeExpiredBid($admin);
+        $this->makeSuggestion($bid, $user, 1000);
+
+        $this->actingAs($admin);
+
+        $this->openAt($bid, EnvelopeStage::A, 99)
+            ->assertSuccessful()
+            ->assertSee('مرور و ثبت نهایی پاکت الف');
     }
 
     /**
@@ -418,13 +539,18 @@ class OpenEnvelopeTest extends TestCase
 
         $this->actingAs($admin);
 
-        Livewire::test(OpenEnvelope::class, [
-            'record' => $bid->getKey(),
-            'stage' => EnvelopeStage::A->value,
-        ])
-            ->call('decide', EnvelopeDecision::Approved->value)
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->call('decide', EnvelopeDecision::Approved->value);
+
+        // On the review screen, «بازگشت و تغییر تصمیم‌ها» goes back to the last
+        // offer — which with a single offer is offer 0 again.
+        $this->openAt($bid, EnvelopeStage::A, 1)
             ->call('previous')
-            ->call('decide', EnvelopeDecision::Declined->value)
+            ->assertRedirectContains('offer=0');
+
+        $this->openAt($bid, EnvelopeStage::A, 0)
+            ->call('decide', EnvelopeDecision::Declined->value);
+        $this->openAt($bid, EnvelopeStage::A, 1)
             ->call('submit');
 
         $this->assertSame(EnvelopeDecision::Declined, $suggestion->fresh()->envelope_a_decision);

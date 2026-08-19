@@ -69,7 +69,8 @@ This is the project's entry-point doc. See also:
       (a mandatory PDF/Word/image upload), or **نامه کسر از مطالبات** (a
       fill-in-the-blank version of the official letter, with an optional
       attachment).
-   3. **مشخصات فنی کالاها** — the same goods table as the next step, but
+   3. **مشخصات فنی کالاها** — the same goods table as the next step, plus a
+      **نقشه** column whose links open that good's drawings in a new tab, and
       with a **مشخصات فنی قابل تامین** box per good instead of a price.
       Leaving it empty is the normal answer — the placeholder says «مشخصات
       کارفرما را میپذیرم», i.e. "I accept the employer's specification";
@@ -126,6 +127,10 @@ This is the project's entry-point doc. See also:
     - **بازکردن پاکت ب** (the same closed letter, now orange) — only the
       offers approved in الف, this time **with** unit prices, line totals and
       جمع کل.
+    - Each click is a page load at `?offer=N`, so the URL is a real position:
+      refresh and the back button both work. On the last offer «بعدی» reads
+      «مرور و ثبت نهایی»; on the review screen the way back reads «بازگشت و
+      تغییر تصمیم‌ها».
     - Both stages end on a review list plus a «ثبت نهایی» button behind an
       "I understand this cannot be undone" checkbox. **Nothing the admin
       clicks is final until that button**: the verdicts are saved as they are

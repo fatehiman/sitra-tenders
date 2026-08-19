@@ -110,9 +110,16 @@ class OpenEnvelope extends Page
      * How far through the offers the admin is.
      *
      * 0-based, and one PAST the last offer means "show the review screen" —
-     * see isOnReviewScreen(). Like every public Livewire property this arrives
-     * from the browser, so it is clamped on every read (currentIndex()) rather
-     * than trusted.
+     * see isOnReviewScreen(). Set from the `?offer=` query string in mount()
+     * and changed only by a REDIRECT to a new `?offer=` (see moveTo()).
+     *
+     * It has to stay a PUBLIC Livewire property even so: mount() does not run
+     * again for the Livewire request a button click makes, so a private
+     * property would be back at 0 by the time decide() recorded a verdict —
+     * i.e. the verdict would land on the wrong offer. Public means it is
+     * carried in the component snapshot, which also means it arrives from the
+     * browser and is clamped on every read (currentIndex()) rather than
+     * trusted.
      */
     public int $index = 0;
 
@@ -130,6 +137,12 @@ class OpenEnvelope extends Page
     {
         $this->record = $this->resolveRecord($record);
         $this->stageValue = EnvelopeStage::tryFrom($stage)?->value ?? EnvelopeStage::A->value;
+
+        // Which offer to show. A query parameter rather than a route segment
+        // because it is a position in a list, not part of the page's identity —
+        // and because it makes the browser's back button and a refresh both do
+        // the obvious thing. Clamped on read; see currentIndex().
+        $this->index = max(0, (int) request()->query('offer', 0));
 
         if ($refusal = $this->refusalReason()) {
             Notification::make()->title($refusal)->warning()->send();
@@ -235,6 +248,12 @@ class OpenEnvelope extends Page
     private function isOnReviewScreen(): bool
     {
         return $this->currentIndex() >= $this->suggestions()->count();
+    }
+
+    /** Is the offer on screen the last one before the review screen? */
+    private function isOnLastSuggestion(): bool
+    {
+        return $this->currentIndex() === $this->suggestions()->count() - 1;
     }
 
     /** The offer being looked at, or null on the review screen. */
@@ -581,26 +600,73 @@ class OpenEnvelope extends Page
         $suggestion->recordDecision($this->stage(), $verdict);
 
         // One past the last offer is the review screen — see isOnReviewScreen().
-        $this->index = $this->currentIndex() + 1;
+        $this->moveTo($this->currentIndex() + 1);
     }
 
     /** Move back one offer, if there is one behind. */
     public function previous(): void
     {
-        $this->index = max(0, $this->currentIndex() - 1);
+        $this->moveTo($this->currentIndex() - 1);
     }
 
     /** Move forward one offer, or onto the review screen. */
     public function next(): void
     {
-        $this->index = $this->currentIndex() + 1;
+        $this->moveTo($this->currentIndex() + 1);
     }
 
-    /** «قبلی» — hidden on the first offer, where there is nothing behind. */
+    /**
+     * Show a different offer — by RELOADING the page at `?offer=N`, not by
+     * changing `$index` and re-rendering in place.
+     *
+     * ---------------------------------------------------------------------
+     * THE BUG THIS FIXES — do not "optimise" it back into a plain assignment
+     * ---------------------------------------------------------------------
+     * The تایید/رد/قبلی/بعدی buttons are schema actions that live INSIDE the
+     * very section they replace: pressing تایید on the last offer swaps the
+     * offer section for the review section, which deletes the schema component
+     * the pressed button belongs to. Filament still has to finish that action's
+     * own lifecycle (unmount it, re-resolve it from the schema), and it cannot
+     * find it any more — so the click committed its verdict to the database
+     * while the page kept the old body and lost the buttons. Reported from
+     * production as "I press تایید and nothing happens except the buttons
+     * change".
+     *
+     * Redirecting ends that request instead of re-rendering it: the action
+     * finishes against the schema it was mounted from, and the next offer (or
+     * the review screen) arrives as a fresh page whose mount() re-reads
+     * everything from the database. It costs one page load per click, which is
+     * the right trade for a screen where each click is a deliberate decision —
+     * and it makes the URL a real position, so refresh and the back button both
+     * behave.
+     *
+     * navigate: false forces a real browser load rather than Livewire's SPA
+     * navigation, so nothing of the old page's DOM or component state survives.
+     */
+    private function moveTo(int $offer): void
+    {
+        $this->redirect(BidResource::getUrl('envelope', [
+            'record' => $this->getRecord(),
+            'stage' => $this->stageValue,
+            // Unknown parameters become query string — hence ?offer=N.
+            'offer' => max(0, min($offer, $this->suggestions()->count())),
+        ]), navigate: false);
+    }
+
+    /**
+     * «قبلی» — hidden on the first offer, where there is nothing behind.
+     *
+     * On the review screen it says «بازگشت و تغییر تصمیم‌ها» instead. A bare
+     * «قبلی» sitting next to «ثبت نهایی پاکت الف» read as a wizard control
+     * that had no business being there; spelling out what it does makes it
+     * obvious that it is the way back in to change a verdict.
+     */
     private function previousAction(): Action
     {
         return Action::make('previousSuggestion')
-            ->label('قبلی')
+            ->label(fn (): string => $this->isOnReviewScreen()
+                ? 'بازگشت و تغییر تصمیم‌ها'
+                : 'قبلی')
             ->icon(Heroicon::OutlinedArrowRight)
             ->color('gray')
             ->visible(fn (): bool => $this->currentIndex() > 0)
@@ -614,12 +680,20 @@ class OpenEnvelope extends Page
      * committing to anything. The undecided offers are listed as
      * «تصمیم‌گیری نشده» on the review screen, and submit() refuses to finalise
      * while any of them remain.
+     *
+     * On the LAST offer it says «مرور و ثبت نهایی», because that is where it
+     * goes — «بعدی» on the final offer looks like a dead end otherwise, which
+     * is exactly how it was read on a tender that had only one offer.
      */
     private function nextAction(): Action
     {
         return Action::make('nextSuggestion')
-            ->label('بعدی')
-            ->icon(Heroicon::OutlinedArrowLeft)
+            ->label(fn (): string => $this->isOnLastSuggestion()
+                ? 'مرور و ثبت نهایی'
+                : 'بعدی')
+            ->icon(fn (): Heroicon => $this->isOnLastSuggestion()
+                ? Heroicon::OutlinedClipboardDocumentCheck
+                : Heroicon::OutlinedArrowLeft)
             ->color('gray')
             ->action(fn () => $this->next());
     }

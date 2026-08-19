@@ -167,6 +167,15 @@ class PageRendersTest extends TestCase
         ]);
 
         $good = Good::create(['code' => 'G-9', 'name' => 'پیچ آلن', 'specifications' => 'M8']);
+        // A نقشه on the good, because the «مشخصات فنی کالاها» step lists them:
+        // deciding whether you can supply a good means reading its drawing.
+        $good->drawings()->create([
+            'disk' => 'public',
+            'path' => 'good-drawings/naghshe-pich.pdf',
+            'original_name' => 'naghshe-pich.pdf',
+            'mime_type' => 'application/pdf',
+            'size' => 1024,
+        ]);
         $bid->goodRequirements()->create(['good_id' => $good->id, 'quantity' => 4]);
 
         $this->actingAs($bidder)
@@ -183,6 +192,9 @@ class PageRendersTest extends TestCase
             ->assertSee('کد تایید')
             // The tender's goods reached the price table.
             ->assertSee('پیچ آلن')
+            // The نقشه column, and the drawing itself as a download link.
+            ->assertSee('نقشه')
+            ->assertSee('naghshe-pich.pdf')
             // Same Enter-key guard as the registration wizard — without it,
             // pressing Enter while typing a price would try to finalise the
             // bid, because the form's submit handler is the LAST step's.

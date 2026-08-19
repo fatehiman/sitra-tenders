@@ -56,11 +56,20 @@ separate public site to protect a `/admin` prefix from.
   review, where `{stage}` is `a` or `b` (`App\Enums\EnvelopeStage`). Also a
   resource page, for the same reasons; see
   [The two-envelope admin review](#the-two-envelope-admin-review-پاکت-الف--پاکت-ب).
-- **Two names for the app.** `APP_NAME` is the full title — «سامانه
-  الکترونیکی مدیریت استعلام پیشنهادات تامین کنندگان» — which Filament uses
-  for the browser tab and the login/register headings. `->brandName()` is the
-  short «سامانه مدیریت استعلام», because the sidebar is 250px wide and the
-  full title would wrap onto three lines there.
+- **Two names for the app.** `APP_NAME` (`.env`) is the official full title —
+  «سامانه الکترونیکی مدیریت استعلام پیشنهادات تامین کنندگان» — and
+  `->brandName()` is the short «سامانه مدیریت استعلام».
+
+  Worth knowing which one you are actually looking at: **everything Filament
+  renders uses the BRAND name**, not `APP_NAME` — the sidebar/topbar brand and
+  the `<title>` suffix both come from `filament()->getBrandName()` (see
+  `vendor/filament/filament/resources/views/components/logo.blade.php`), so the
+  browser tab reads «ورود - سامانه مدیریت استعلام». That is deliberate: the
+  sidebar is 250px wide and 55 characters would wrap onto three lines. If the
+  full title is ever wanted in the tab as well, the way to get it without
+  wrecking the sidebar is `->brandName(full)` plus a `->brandLogo()` holding
+  the short text as an `Htmlable` — Filament renders that in the same
+  `div.fi-logo` wrapper the brand name uses.
 - **تغییر رمز عبور** — the change-password page, available to all three
   roles. `$navigationSort = 99` pins it to the BOTTOM of the sidebar: the
   three resources use 1/2/3, and a page that leaves the sort null is treated
@@ -943,7 +952,7 @@ and no antivirus hook, and the PHP limits were already raised via
 is deliberately **no app-side change for this** — re-measure the client's
 uplink before reopening it.
 
-### Deploy pitfalls (both hit for real)
+### Deploy pitfalls (all hit for real)
 
 - **Never ship `bootstrap/cache/` to the server.** It is generated, and the
   local copy lists dev-only packages. `laravel-lang/lang` is in
@@ -952,6 +961,14 @@ uplink before reopening it.
   took the whole site to HTTP 500 on every route until those files were
   deleted. Exclude `bootstrap/cache` from the tarball. (`storage`, `.env`,
   `vendor`, `tests` are already excluded for the same class of reason.)
+- **A deploy that adds a ROUTE must re-cache routes immediately.** The
+  2026-08-19 deploy added `/password-reset/request` and a login page that
+  links to it. In the ~40 seconds between extracting the tarball and running
+  `php artisan optimize`, a real request rendered the new login page against
+  the OLD cached route table and threw
+  `Route [filament.app.auth.password-reset.request] not defined`. Nothing was
+  broken afterwards, but the window is avoidable: extract and
+  `php artisan optimize` in the same command, not in two.
 - **Deleting a class file needs `composer dump-autoload` on the server.**
   Removing `app/Rules/IranianCompanyNationalId.php` left a stale entry in
   the optimized classmap, so any `class_exists()` on it emitted

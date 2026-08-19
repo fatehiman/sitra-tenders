@@ -427,7 +427,9 @@ updated as work lands — it's the source of truth for "what's left."
       `->passwordReset(...)`, which also puts the link under the login form
 - [x] **Project title** is now «سامانه الکترونیکی مدیریت استعلام پیشنهادات
       تامین کنندگان» (`APP_NAME`), with `->brandName('سامانه مدیریت استعلام')`
-      for the 250px sidebar
+      for the 250px sidebar. Note Filament uses the BRAND name for both the
+      sidebar and the `<title>` suffix, so the tab reads the short form; the
+      full title lives in `APP_NAME` (and in the `.env` on the server)
 - [x] **Bidder identity is masked from admins** — «مخفی شده» in the
       «پیشنهادهای دریافتی» modal, the «لغو» list (offers identified by «کد
       پیگیری» + time instead) and both envelope screens, via the single rule
@@ -452,12 +454,23 @@ updated as work lands — it's the source of truth for "what's left."
       columns) and 17 new/updated tests — the wizard's step numbers shifted,
       plus new suites for the password-reset wizard and both envelopes;
       80 passing
-- [ ] **Deploy to sitra.ir** — pending: SSH (162.55.167.140:22) was
-      unreachable from the dev machine while this phase was built. When it is
-      back: ship, run the two migrations, `composer dump-autoload --optimize
-      --no-dev` (new enum/model/service/page classes), `php artisan optimize`,
-      and **update `APP_NAME` and the two `MSGWAY_TEMPLATE_BID_*` keys in the
-      server's `.env`**
+- [x] **Deployed to sitra.ir on 2026-08-19.** Tarball over SSH as before
+      (port 22 was unreachable while this phase was built and came back before
+      the deploy). Both migrations ran clean, `composer dump-autoload
+      --optimize --no-dev` picked up the new enum/model/service/page classes,
+      `php artisan optimize` re-cached. The live `.env` gained
+      `MSGWAY_TEMPLATE_BID_WON=23572` / `MSGWAY_TEMPLATE_BID_DECLINED=23573`
+      and the new `APP_NAME` (old copy backed up under `/root`). Verified:
+      `/` → 302, `/login`, `/register` and `/password-reset/request` → 200 with
+      all three reset steps rendering, the login page linking to it, the brand
+      showing «سامانه مدیریت استعلام», everything `sitra`-owned, and no log
+      entries after the deploy finished. **One transient error is in the log at
+      15:37**: a request served in the gap between extracting the code and
+      running `artisan optimize` hit the stale route cache and threw
+      `Route [filament.app.auth.password-reset.request] not defined` — the new
+      login page linking to a route the cached table did not have yet. Harmless
+      once cached, but the lesson generalises: **when a deploy adds a ROUTE,
+      re-run `php artisan optimize` in the same breath as the extract**
 
 ## Open items to revisit later (not blocking v1)
 

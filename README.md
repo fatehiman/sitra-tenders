@@ -30,10 +30,11 @@ This is the project's entry-point doc. See also:
    exist today — `admin`, `staff`, `user` — modeled so a fourth role can be
    added later without schema changes.
 3. **Project title**: «سامانه الکترونیکی مدیریت استعلام پیشنهادات تامین
-   کنندگان» — the full title is `APP_NAME`, used for the browser tab and the
-   login/registration headings. The sidebar brand is the short «سامانه مدیریت
-   استعلام», because 55 characters would wrap onto three lines in a 250px
-   sidebar.
+   کنندگان» — the official full title, held in `APP_NAME`. The panel itself
+   (sidebar brand *and* browser tab) shows the short «سامانه مدیریت استعلام»,
+   because Filament uses one brand name for both and 55 characters would wrap
+   onto three lines in a 250px sidebar. See
+   [ARCHITECTURE.md](ARCHITECTURE.md#panel-structure).
 4. **Change password** page available to every authenticated role — last
    item in the sidebar. Locked out entirely? «فراموشی رمز عبور» on the login
    page is a three-step wizard: mobile number → SMS code → new password twice,

@@ -520,7 +520,13 @@ updated as work lands — it's the source of truth for "what's left."
       it now explains all three locks at once
 - [x] Tests: create-an-admin, delete-another-admin, self-save keeps role and
       is_active, another admin's role is editable, last-admin guard; 87 passing
-- [x] **Deployed to sitra.ir on 2026-08-20**
+- [ ] **Deploy to sitra.ir — pending**: SSH port 22 on 162.55.167.140 times
+      out from the dev machine again (the site itself serves fine, `/login`
+      → 200), and the old `127.0.0.1:10809` proxy is not running. Nothing in
+      this phase needs a migration, a route or an asset rebuild — five PHP
+      class files, so the deploy is: ship `app/`, then
+      `php artisan optimize`. No `composer dump-autoload` needed: no class
+      file was added or removed
 
 ## Open items to revisit later (not blocking v1)
 

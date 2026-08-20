@@ -499,6 +499,29 @@ updated as work lands — it's the source of truth for "what's left."
       the render test; 83 passing
 - [x] **Deployed to sitra.ir on 2026-08-19** (second deploy of the day)
 
+## Phase 13.2 — admins are managed from the panel (2026-08-20)
+
+- [x] **«مدیر سیستم» added to the کاربران form's listbox**, now labelled
+      «سطح دسترسی» (the table column and its filter too). Admins are created
+      through the UI; `AdminUserSeeder` only makes the *first* one
+- [x] **Other admins are deletable** — `UserPolicy::delete()` no longer
+      refuses every admin row, only your own account and the last admin left
+      (`User::isLastAdmin()`)
+- [x] **Your own account is locked instead**: «سطح دسترسی» and «فعال» are
+      `->disabled()` on your own record, and delete is refused. Since you can
+      only ever demote/deactivate/delete *another* admin, the account you are
+      signed into always survives — that is the whole "at least one admin must
+      exist" guarantee, with no counting and no error paths. Written up in
+      [ARCHITECTURE.md](ARCHITECTURE.md#managing-admins-and-why-you-cannot-demote-yourself)
+- [x] A disabled field is not dehydrated, so `EditUser` now treats a missing
+      `role` key as "leave the role as it is" — `syncRoles([null])` would have
+      stripped the admin's own role on a self-save
+- [x] The shield icon moved from admin rows to the viewer's **own** row, where
+      it now explains all three locks at once
+- [x] Tests: create-an-admin, delete-another-admin, self-save keeps role and
+      is_active, another admin's role is editable, last-admin guard; 87 passing
+- [x] **Deployed to sitra.ir on 2026-08-20**
+
 ## Open items to revisit later (not blocking v1)
 
 - **شناسه ملی is no longer checksum-validated — this was decided, not

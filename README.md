@@ -25,10 +25,15 @@ This is the project's entry-point doc. See also:
    logged straight into the panel. If `company_name` is set, the account is
    treated/displayed as a company account everywhere in the app; otherwise
    the person's name + family is displayed.
-2. **Admin** can list/manage all registered users, and can create users or
-   staff directly (no OTP required for admin-created accounts). Three roles
-   exist today — `admin`, `staff`, `user` — modeled so a fourth role can be
-   added later without schema changes.
+2. **Admin** can list/manage all registered users, and can create users,
+   staff **or other admins** directly (no OTP required for admin-created
+   accounts). Three roles exist today — `admin`, `staff`, `user` — modeled so
+   a fourth role can be added later without schema changes. «سطح دسترسی»
+   offers all three, and the one account an admin can never touch is **their
+   own**: they cannot delete it, change its سطح دسترسی or deactivate it. That
+   single restriction is what guarantees at least one reachable admin always
+   remains — see
+   [ARCHITECTURE.md](ARCHITECTURE.md#managing-admins-and-why-you-cannot-demote-yourself).
 3. **Project title**: «سامانه الکترونیکی مدیریت استعلام پیشنهادات تامین
    کنندگان» — the official full title, held in `APP_NAME`. The panel itself
    (sidebar brand *and* browser tab) shows the short «سامانه مدیریت استعلام»,

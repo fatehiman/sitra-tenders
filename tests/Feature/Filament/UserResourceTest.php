@@ -188,8 +188,11 @@ class UserResourceTest extends TestCase
         Storage::disk('public')->assertMissing('bid-suggestions/receipt.pdf');
     }
 
-    /** Admins are off limits — for other admins and for themselves. */
-    public function test_an_admin_cannot_be_deleted(): void
+    /**
+     * Another admin IS deletable now that admins are managed from the UI —
+     * but never your own account, and never the last admin left.
+     */
+    public function test_an_admin_can_delete_another_admin_but_never_themselves(): void
     {
         $this->seed(RoleSeeder::class);
 
@@ -197,9 +200,106 @@ class UserResourceTest extends TestCase
         $otherAdmin = $this->bidder('09121234599', '0084575948');
         $otherAdmin->syncRoles([RoleName::Admin->value]);
 
-        $this->assertFalse($admin->can('delete', $otherAdmin));
+        $this->assertTrue($admin->can('delete', $otherAdmin));
         $this->assertFalse($admin->can('delete', $admin));
         $this->assertTrue($admin->can('delete', $this->bidder('09121234588', '0013542419')));
+    }
+
+    /**
+     * The last admin standing is flagged as undeletable — the extra guard
+     * behind "you cannot delete yourself". In normal use it is unreachable
+     * (an admin deleting an admin means there were two), so this pins the
+     * helper itself rather than a UI path.
+     */
+    public function test_the_last_admin_is_protected(): void
+    {
+        $this->seed(RoleSeeder::class);
+
+        $admin = $this->admin();
+        $otherAdmin = $this->bidder('09121234599', '0084575948');
+        $otherAdmin->syncRoles([RoleName::Admin->value]);
+
+        // Two admins: neither is the last one.
+        $this->assertFalse($admin->isLastAdmin());
+        $this->assertFalse($otherAdmin->isLastAdmin());
+        $this->assertTrue($admin->can('delete', $otherAdmin));
+
+        // Demote one and the survivor becomes untouchable.
+        $otherAdmin->syncRoles([RoleName::User->value]);
+        $this->assertTrue($admin->fresh()->isLastAdmin());
+        $this->assertFalse($admin->fresh()->can('delete', $admin->fresh()));
+    }
+
+    /** «مدیر سیستم» is now one of the choices in the سطح دسترسی listbox. */
+    public function test_admin_can_create_another_admin(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $admin = $this->admin();
+
+        $this->actingAs($admin);
+
+        Livewire::test(CreateUser::class)
+            ->fillForm([
+                'first_name' => 'مریم',
+                'last_name' => 'رضایی',
+                'mobile' => '09129997766',
+                'national_id' => '0084575948',
+                'person_type' => 'individual',
+                'password' => 'Secret123',
+                'role' => RoleName::Admin->value,
+                'is_active' => true,
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $created = User::where('mobile', '09129997766')->first();
+
+        $this->assertNotNull($created);
+        $this->assertTrue($created->hasRole(RoleName::Admin->value));
+    }
+
+    /**
+     * Your own سطح دسترسی and فعال fields are disabled, and — the part that
+     * actually matters — saving the form leaves both untouched, because a
+     * disabled Filament field is never sent back with the data.
+     */
+    public function test_an_admin_cannot_change_their_own_role_or_deactivate_themselves(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $admin = $this->admin();
+
+        $this->actingAs($admin);
+
+        Livewire::test(EditUser::class, ['record' => $admin->getRouteKey()])
+            ->assertFormFieldIsDisabled('role')
+            ->assertFormFieldIsDisabled('is_active')
+            ->fillForm(['first_name' => 'مدیرکل'])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $admin->refresh();
+        $this->assertSame('مدیرکل', $admin->first_name);
+        $this->assertTrue($admin->hasRole(RoleName::Admin->value), 'the role must survive a save of your own account');
+        $this->assertTrue($admin->is_active);
+    }
+
+    /** Another admin's role, by contrast, can be changed freely. */
+    public function test_an_admin_can_change_another_admins_role(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $admin = $this->admin();
+        $otherAdmin = $this->bidder('09121234599', '0084575948');
+        $otherAdmin->syncRoles([RoleName::Admin->value]);
+
+        $this->actingAs($admin);
+
+        Livewire::test(EditUser::class, ['record' => $otherAdmin->getRouteKey()])
+            ->assertFormFieldIsEnabled('role')
+            ->fillForm(['role' => RoleName::Staff->value])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertTrue($otherAdmin->fresh()->hasRole(RoleName::Staff->value));
     }
 
     /**

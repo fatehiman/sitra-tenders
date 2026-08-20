@@ -253,18 +253,55 @@ everywhere (panel header, tenders list "submitted by", etc.) — the two are
 kept in sync at write time (company_name is only ever set when
 person_type = company), so the accessor only needs to check one column.
 
+## Managing admins (and why you cannot demote yourself)
+
+«مدیر سیستم» is one of the three choices in the کاربران form's «سطح دسترسی»
+listbox, alongside کارشناس and کاربر, so an admin creates and removes other
+admins from the panel. The seeder (`AdminUserSeeder`) only exists to produce
+the *first* one.
+
+The whole design rests on one invariant: **the system must never be left
+without a reachable admin.** Rather than counting admins on every mutation
+and reporting failures, the rule is enforced by locking the three things an
+admin could do to their *own* account:
+
+| Action on your own row | Where it is stopped |
+| --- | --- |
+| delete | `UserPolicy::delete()` — `$user->isNot($model)` |
+| change «سطح دسترسی» | `UserForm` — the `Select` is `->disabled()` on your own record |
+| switch «فعال» off | same, and for the same reason: `User::canAccessPanel()` refuses an inactive account, so this is a lock-out by another name |
+
+Because you can only ever demote, deactivate or delete *another* admin, the
+account you are signed into always survives — so at least one working admin
+always exists. No count, no error message, nothing to get wrong.
+
+Two implementation details worth knowing:
+
+- **A disabled Filament field is not "dehydrated"** — its value is not sent
+  back with the saved data at all, so the lock is not merely visual: a
+  crafted request cannot carry a new role for your own account either.
+  The flip side is that `EditUser::mutateFormDataBeforeSave()` must treat a
+  **missing** `role` key as "leave the role alone"; `syncRoles([null])`
+  would strip every role from the account.
+- `User::isLastAdmin()` (used by the policy) is belt-and-braces behind the
+  self rules — an admin deleting an admin means there were two, so it cannot
+  normally fire. It is there so the invariant still holds if the policy is
+  ever consulted from outside an admin's own session.
+
 ## Deleting a user account
 
 Admin-only, from the کاربران table, and **permanent** — there is no soft
 delete on `users`. Three rules, in the order they are enforced:
 
-1. **Admins cannot be deleted** — not by another admin, not by themselves.
-   `UserPolicy::delete()` refuses both, so the URL is refused and not just
-   the button hidden. Demoting the account to کارشناس/کاربر first is the
-   escape hatch, and a shield icon on admin rows says so — Filament removes
-   a policy-denied button silently, and an unexplained gap where every other
-   row has a delete button reads as a bug (same reasoning as the lock icon
-   on مناقصات).
+1. **You cannot delete your own account** — and that single rule is what
+   keeps the panel reachable. `UserPolicy::delete()` refuses it, so the URL
+   is refused and not just the button hidden. Other admins *are* deletable
+   (see "Managing admins" below); the last remaining admin is not, which is
+   a second guard that in practice can only ever be the person reading the
+   table. A shield icon sits on the viewer's own row and explains all of it —
+   Filament removes a policy-denied button silently, and an unexplained gap
+   where every other row has a delete button reads as a bug (same reasoning
+   as the lock icon on مناقصات).
 2. **An account that published مناقصات cannot be deleted either**, and this
    one is a hard refusal with an explanation rather than a hidden button.
    `bids.created_by` is `cascadeOnDelete`, so removing, say, a کارشناس would

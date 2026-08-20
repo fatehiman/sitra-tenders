@@ -36,8 +36,18 @@ class EditUser extends EditRecord
     /** Runs on save: write the role, then drop it from the column data. */
     protected function mutateFormDataBeforeSave(array $data): array
     {
-        $this->record->syncRoles([$data['role']]);
-        unset($data['role']);
+        /*
+         * The key can legitimately be MISSING: on your own account the
+         * «سطح دسترسی» field is disabled, and a disabled Filament field is
+         * not sent back with the saved data at all. That is the whole
+         * mechanism stopping an admin from demoting themselves — so treat
+         * the absence as "leave the role exactly as it is", never as null
+         * (syncRoles([null]) would strip every role from the account).
+         */
+        if (array_key_exists('role', $data)) {
+            $this->record->syncRoles([$data['role']]);
+            unset($data['role']);
+        }
 
         return $data;
     }

@@ -50,7 +50,7 @@ class UsersTable
                 // for an unknown value rather than throwing, and the ?? then
                 // falls back to showing the raw name.
                 TextColumn::make('roles.name')
-                    ->label('نقش')
+                    ->label('سطح دسترسی')
                     ->badge()
                     ->formatStateUsing(fn (?string $state): string => $state ? (RoleName::tryFrom($state)?->label() ?? $state) : '-'),
                 // mobile_verified_at holds a date or null; ->boolean() wants
@@ -76,7 +76,7 @@ class UsersTable
             // Dropdown filters shown above the table.
             ->filters([
                 SelectFilter::make('roles')
-                    ->label('نقش')
+                    ->label('سطح دسترسی')
                     ->relationship('roles', 'name')
                     // Builds ['admin' => 'مدیر سیستم', ...] straight from the
                     // enum, so adding a role never needs editing this file.
@@ -109,8 +109,9 @@ class UsersTable
     /**
      * The «حذف» button.
      *
-     * UserPolicy::delete() already decides WHO may be deleted (not yourself,
-     * not another admin). This adds the two things a policy cannot express:
+     * UserPolicy::delete() already decides WHO may be deleted (anyone but
+     * yourself, and never the last remaining admin). This adds the two
+     * things a policy cannot express:
      *
      *  - a confirmation that counts what is about to be destroyed, because
      *    the requirement is that the admin sees how many پیشنهاد go with the
@@ -184,13 +185,18 @@ class UsersTable
     }
 
     /**
-     * A shield icon standing where «حذف» would be, on admin rows.
+     * A shield icon standing where «حذف» would be, on the viewer's OWN row.
      *
-     * UserPolicy::delete() returns false for admins, so Filament removes the
-     * button on its own — silently. This action exists purely so the absence
-     * is explained, the same way BidsTable's lock icon explains a missing
-     * «ویرایش». It is not shown on the viewer's own row: "you cannot delete
-     * yourself" needs no explaining.
+     * UserPolicy::delete() returns false for your own account, so Filament
+     * removes the button on its own — silently. This action explains the
+     * absence, the same way BidsTable's lock icon explains a missing
+     * «ویرایش», and it is the natural place to also say why the «سطح
+     * دسترسی» and «فعال» fields are locked on that same account.
+     *
+     * Other admins get no shield: since this change they are ordinary,
+     * deletable rows (only the *last* admin is not, and the last admin is
+     * always the person reading this table — nobody else could be looking
+     * at it).
      */
     private static function protectedAction(): Action
     {
@@ -199,9 +205,9 @@ class UsersTable
             ->icon(Heroicon::OutlinedShieldCheck)
             ->iconButton()
             ->color('gray')
-            ->visible(fn (User $record): bool => $record->isAdmin() && auth()->user()?->isNot($record))
-            ->modalHeading('این کاربر قابل حذف نیست')
-            ->modalDescription('حساب‌های «مدیر سیستم» حذف نمی‌شوند. اگر واقعاً باید حذف شود، ابتدا نقش او را به «کارشناس» یا «کاربر» تغییر دهید.')
+            ->visible(fn (User $record): bool => auth()->user()?->is($record) === true)
+            ->modalHeading('حساب خودتان قابل حذف نیست')
+            ->modalDescription('برای اینکه سامانه هرگز بدون «مدیر سیستم» نماند، حساب کاربری که با آن وارد شده‌اید نه حذف می‌شود، نه سطح دسترسی‌اش تغییر می‌کند و نه غیرفعال می‌شود. اگر این حساب باید حذف یا تغییر کند، مدیر دیگری این کار را انجام دهد.')
             ->modalSubmitAction(false)
             ->modalCancelActionLabel('بستن');
     }

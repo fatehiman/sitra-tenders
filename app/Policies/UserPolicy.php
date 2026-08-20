@@ -36,11 +36,18 @@ class UserPolicy
      * deleted. Deletion is PERMANENT (there is no soft delete on this
      * model), so two accounts are off limits:
      *
-     *   - your own — the fastest possible way to lock everyone out of the
-     *     panel;
-     *   - any other admin — an explicit requirement: admins delete staff and
-     *     regular users, never each other. Demote the account first if it
-     *     really has to go.
+     *   - your own — the fastest possible way to lock yourself out of the
+     *     panel, and the guard that makes "there is always at least one
+     *     admin" true: you can only ever remove *another* admin, so the one
+     *     you are signed into always remains;
+     *   - the last remaining «مدیر سیستم» — belt and braces behind the rule
+     *     above (an admin deleting another admin means there were two), so
+     *     the invariant survives even if this policy is ever called from
+     *     somewhere that is not an admin's own session.
+     *
+     * Other admins ARE deletable, which is a deliberate change from the
+     * first version of this app: admins are now created and removed through
+     * the UI (see UserForm's «سطح دسترسی» field), not only by the seeder.
      *
      * Not encoded here: "this account published tenders". That check lives
      * in UsersTable's delete action, for the same reason GoodPolicy::delete()
@@ -52,7 +59,7 @@ class UserPolicy
     {
         return $user->hasRole(RoleName::Admin->value)
             && $user->isNot($model)
-            && ! $model->isAdmin();
+            && ! $model->isLastAdmin();
     }
 
     public function restore(User $user, User $model): bool

@@ -184,9 +184,25 @@ class User extends Authenticatable implements FilamentUser, HasName
         return $this->bids()->exists();
     }
 
-    /** Is this an admin account? Admins may not be deleted by anyone. */
+    /** Is this an admin account? */
     public function isAdmin(): bool
     {
         return $this->hasRole(RoleName::Admin->value);
+    }
+
+    /**
+     * Is this the only «مدیر سیستم» left in the system?
+     *
+     * Such an account must not be deleted or demoted: with no admin left,
+     * nobody could ever manage users again — the panel has no back door and
+     * no super-user outside the database.
+     *
+     * `role()` is a query scope that spatie/laravel-permission adds through
+     * the HasRoles trait; it filters users by their role in the pivot table.
+     */
+    public function isLastAdmin(): bool
+    {
+        return $this->isAdmin()
+            && static::role(RoleName::Admin->value)->count() <= 1;
     }
 }

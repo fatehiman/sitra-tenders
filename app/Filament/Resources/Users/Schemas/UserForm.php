@@ -4,12 +4,14 @@ namespace App\Filament\Resources\Users\Schemas;
 
 use App\Enums\PersonType;
 use App\Enums\RoleName;
+use App\Models\User;
 use App\Rules\IranianNationalId;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\Auth;
 
 /**
  * The admin-facing create/edit form for user accounts.
@@ -104,19 +106,65 @@ class UserForm
                     ->minLength(8)
                     ->helperText('در ویرایش، فقط در صورت نیاز به تغییر رمز عبور تکمیل شود.'),
                 Select::make('role')
-                    ->label('نقش')
-                    // `admin` is intentionally absent: admins are created by
-                    // the seeder, not through the UI.
-                    ->options([
-                        RoleName::Staff->value => RoleName::Staff->label(),
-                        RoleName::User->value => RoleName::User->label(),
-                    ])
-                    ->required(),
+                    ->label('سطح دسترسی')
+                    /*
+                     * All three roles, «مدیر سیستم» included: an admin may
+                     * create another admin from here. The one thing that is
+                     * NOT allowed is changing your OWN role — see isSelf()
+                     * below for why.
+                     */
+                    ->options(array_combine(
+                        array_map(fn (RoleName $role): string => $role->value, RoleName::cases()),
+                        array_map(fn (RoleName $role): string => $role->label(), RoleName::cases()),
+                    ))
+                    ->required()
+                    /*
+                     * A disabled field is also not "dehydrated" (not sent
+                     * back with the saved data) in Filament, which is
+                     * exactly what we want here: the role of your own
+                     * account cannot be changed even by a crafted request,
+                     * because the value never reaches the save at all.
+                     * EditUser::mutateFormDataBeforeSave() is written to
+                     * expect the missing key.
+                     */
+                    ->disabled(fn (?User $record): bool => self::isSelf($record))
+                    ->helperText(fn (?User $record): ?string => self::isSelf($record)
+                        ? 'سطح دسترسی حساب خودتان قابل تغییر نیست. در صورت نیاز، مدیر دیگری آن را تغییر دهد.'
+                        : null),
                 Toggle::make('is_active')
                     ->label('فعال')
                     ->default(true)
-                    ->required(),
+                    ->required()
+                    /*
+                     * Same reasoning as the role field: an inactive account
+                     * cannot enter the panel at all (see
+                     * User::canAccessPanel()), so letting an admin switch
+                     * this off on their own row is another way of locking
+                     * yourself out.
+                     */
+                    ->disabled(fn (?User $record): bool => self::isSelf($record))
+                    ->helperText(fn (?User $record): ?string => self::isSelf($record)
+                        ? 'حساب خودتان را نمی‌توانید غیرفعال کنید.'
+                        : null),
             ]);
+    }
+
+    /**
+     * Is the record being edited the logged-in admin's own account?
+     *
+     * `$record` is null on the create page (there is nothing to edit yet),
+     * so every guard built on this is simply off while creating.
+     *
+     * WHY the two fields above are locked on your own row: together with
+     * UserPolicy::delete() refusing your own account, this is what
+     * guarantees the system can never be left without a reachable admin.
+     * An admin may demote, deactivate or delete *another* admin — but never
+     * the one account they are signed into, so at least one working admin
+     * always survives whatever they do.
+     */
+    private static function isSelf(?User $record): bool
+    {
+        return $record !== null && Auth::user()?->is($record) === true;
     }
 
     /**
